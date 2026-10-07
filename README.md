@@ -1,62 +1,35 @@
-﻿# Product API
+﻿# ProductAPI – feature/ef-core-sqlserver
 
-API desarrollada con **.NET 8**, siguiendo principios de **Clean Architecture**.
+## 📌 Resumen de esta etapa
+Preparación y configuración de la persistencia de datos. Se conecta el dominio con SQL Server mediante Entity Framework Core, manteniendo la implementación aislada en la capa de Infraestructura.
 
-## Arquitectura
+## 🧭 Evolución del Proyecto (Diario de Desarrollo)
+- **Posición**: Etapa 3.
+- **Qué se heredó**: Entidades de dominio ricas y pruebas unitarias de eature/product-domain.
+- **Qué se agregó**: Documentación técnica y planificación de instalación de paquetes Microsoft.EntityFrameworkCore.SqlServer y el contexto de datos.
+- **Decisiones técnicas**: Se estableció explícitamente que la configuración de acceso a datos (ApplicationDbContext) residirá únicamente en ProductAPI.Infrastructure para proteger la inmutabilidad de la capa de Dominio.
 
-El proyecto está dividido en las siguientes capas:
+## ✨ Funcionalidades
+- Por confirmar (La configuración de base de datos está en progreso).
 
-- ProductAPI.Api
-- ProductAPI.Application
-- ProductAPI.Domain
-- ProductAPI.Infrastructure
-- ProductAPI.Domain.Tests
+## 🛠️ Tecnologías
+| Tecnología | Versión | Para qué se usa |
+|---|---|---|
+| .NET | 8.0 | Framework base |
+| EF Core | (Pendiente) | Object-Relational Mapper (ORM) |
+| SQL Server | (Pendiente) | Motor de persistencia relacional |
 
-## Progreso del proyecto
+## 🚀 Instalación y ejecución
+*(Nota: Pasos temporales, la base de datos aún no se ha generado)*
+1. Clonar repositorio y cambiar a rama: git checkout feature/ef-core-sqlserver.
+2. Restaurar solución: dotnet restore.
 
-- [x] Estructura base de la solución.
-- [x] Entidades del dominio.
-- [x] Reglas de negocio de Product.
-- [x] Pruebas unitarias del dominio.
-- [ ] Entity Framework Core.
-- [ ] SQL Server.
-- [ ] ApplicationDbContext.
-- [ ] Migraciones.
-- [ ] CQRS con MediatR.
-- [ ] Endpoints CRUD.
-- [ ] FluentValidation.
-- [ ] Manejo global de errores.
-- [ ] Autenticación JWT.
-- [ ] Docker.
-- [ ] CI/CD.
+## 📂 Estructura del proyecto
+`	ext
+├── ProductAPI.Infrastructure/
+│   ├── (Futuro) ApplicationDbContext.cs
+│   └── (Futuro) Migrations/
+`
 
-## Ramas desarrolladas
-
-### eature/product-domain
-
-Estado: **Completada**
-
-Implementa el núcleo del dominio de la aplicación:
-
-- Product
-- Category
-- Brand
-- Review
-- Reglas de negocio
-- Encapsulación
-- Pruebas unitarias con xUnit
-
-### eature/ef-core-sqlserver
-
-Estado: **En progreso**
-
-Su objetivo es conectar el dominio con SQL Server mediante Entity Framework Core.
-
-Pendiente:
-
-- Instalar Entity Framework Core.
-- Configurar SQL Server.
-- Crear ApplicationDbContext.
-- Configurar entidades.
-- Crear migraciones.
-- Generar la base de datos.
+## ➡️ Siguiente etapa
+Desarrollo de los comandos y consultas (CQRS) con MediatR.
