@@ -1,35 +1,40 @@
-﻿# Product API
+﻿# ProductAPI – feature/product-domain
 
-API robusta construida con **.NET 8**, **Clean Architecture** y el patrón **CQRS**.
+## 📌 Resumen de esta etapa
+Creación del núcleo de negocio (Dominio) de ProductAPI, manteniendo la capa completamente independiente de bases de datos, APIs y otros componentes externos.
 
----
+## 🧭 Evolución del Proyecto (Diario de Desarrollo)
+- **Posición**: Etapa 2 de la evolución actual.
+- **Qué se heredó**: Estructura de proyectos Clean Architecture de la rama main.
+- **Qué se agregó**: Entidades (Product, Category, Brand, Review), reglas de negocio encapsuladas y el proyecto de pruebas unitarias (ProductAPI.Domain.Tests).
+- **Decisiones técnicas**: Se aplicó el patrón de *Modelo de Dominio Rico*, usando private set en las propiedades para evitar modificaciones anémicas y garantizar que los cambios de estado pasen por métodos validadores (ej. UpdatePrice).
+- **Problemas resueltos**: Se protegió la integridad del producto garantizando que precios y stocks no puedan ser negativos (excepciones ArgumentException interceptadas en pruebas).
 
-## 📖 Evolución del Proyecto (Diario de Desarrollo)
+## ✨ Funcionalidades
+- Por confirmar (Aún no hay endpoints HTTP expuestos, la lógica es puramente interna).
 
-### 🌿 Rama: eature/ef-core-sqlserver (EN PROGRESO)
-**Objetivo:** Conectar nuestro dominio puro con una base de datos real (SQL Server) usando Entity Framework Core, respetando la Arquitectura Limpia.
+## 🛠️ Tecnologías
+| Tecnología | Versión | Para qué se usa |
+|---|---|---|
+| .NET | 8.0 | Framework base |
+| xUnit | (latest) | Framework para pruebas unitarias de dominio |
 
-**Pasos y Evolución:**
-1. *(Próximamente)* Configuración de Docker para levantar SQL Server en local.
-2. *(Próximamente)* Instalación de paquetes EF Core en la capa de Infraestructura.
-3. *(Próximamente)* Creación del ApplicationDbContext (el puente entre C# y la base de datos).
-4. *(Próximamente)* Generación y ejecución de la primera Migración.
+## 🚀 Instalación y ejecución
+1. Clonar el repositorio y cambiar a la rama: git checkout feature/product-domain.
+2. Restaurar paquetes: dotnet restore.
+3. Ejecutar pruebas unitarias para verificar el dominio: dotnet test ProductAPI.Domain.Tests.
 
----
+## 📂 Estructura del proyecto
+`	ext
+├── ProductAPI.Domain/
+│   └── Entities/
+│       ├── Brand.cs
+│       ├── Category.cs
+│       ├── Product.cs
+│       └── Review.cs
+└── ProductAPI.Domain.Tests/
+    └── ProductTests.cs
+`
 
-### 🌿 Rama: eature/product-domain (COMPLETADA)
-**Objetivo:** Crear el núcleo de la aplicación sin dependencias externas.
-**Logros:**
-- Se crearon las entidades base: Product, Category, Brand y Review.
-- Se aplicó el concepto de **Modelo de Dominio Rico**: las propiedades usan private set para encapsulamiento.
-- Se crearon métodos guardianes (ej. UpdatePrice, RemoveStock) que arrojan excepciones (ArgumentException, InvalidOperationException) si se violan las reglas de negocio.
-- Se configuró **xUnit** y se escribieron pruebas unitarias para asegurar que las reglas del Product funcionan correctamente.
-
----
-
-## 🚀 Progreso del PRD General
-- [x] Estructura Base (Solución y capas).
-- [x] Dominio y Reglas de Negocio.
-- [ ] Bases de datos (EF Core + SQL Server).
-- [ ] MediatR y CQRS.
-- [ ] Endpoints de la API.
+## ➡️ Siguiente etapa
+Integración de la base de datos (Persistencia) y configuración del ORM en la rama eature/ef-core-sqlserver.
