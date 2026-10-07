@@ -1,95 +1,54 @@
-﻿# Product Domain
+﻿# Product Domain (Las Reglas del Negocio)
 
-Rama:
+Rama: `feature/product-domain`
 
-eature/product-domain
+## 📌 ¿Para qué sirve esta capa? (Explicación para no programadores)
+Imagina que esta capa es **El Cerebro o el Manual de Reglas** de nuestra empresa. Aquí es donde definimos qué es un Producto, qué es una Marca, y las reglas inquebrantables de nuestro negocio.
 
-## Objetivo
+Por ejemplo:
+- "Un producto no puede tener precio menor a cero".
+- "No puedes descontar inventario si no hay productos disponibles".
 
-Crear el núcleo de negocio de ProductAPI manteniendo la capa de dominio independiente de bases de datos, APIs y otros componentes externos.
+Lo más importante de esta capa es que **no sabe nada del mundo exterior**. No sabe que existe Internet, no sabe que hay bases de datos, no sabe nada. Solo conoce el negocio. Esto hace que las reglas sean puras, seguras y nunca se rompan accidentalmente.
 
-## Entidades creadas
+## 🧱 Entidades creadas (Conceptos de negocio)
 
-Se implementaron las siguientes entidades:
+Se implementaron las siguientes entidades (objetos principales):
 
-- Product
-- Category
-- Brand
-- Review
+- **Product** (Producto): La mercancía que vendemos.
+- **Category** (Categoría): Para agrupar los productos (ej. "Electrónica").
+- **Brand** (Marca): El fabricante del producto.
+- **Review** (Reseña): Las opiniones y calificaciones de los clientes.
 
-Estas clases se encuentran dentro de:
-
-`	ext
+Estas clases se encuentran dentro de la carpeta:
+```text
 ProductAPI.Domain/Entities
-`
+```
 
-## Product
+## 🔒 Reglas de negocio (Cómo protegemos los datos)
 
-La entidad Product contiene las principales reglas de negocio relacionadas con productos e inventario.
+La entidad `Product` contiene las reglas principales. Sus propiedades utilizan "candados" (técnicamente llamado `private set`) para que **nadie** pueda modificar un precio o el inventario desde fuera sin usar el método correcto.
 
-Sus propiedades utilizan private set para evitar modificaciones directas desde otras capas.
+### 💰 Actualizar Precio (UpdatePrice)
+Permite modificar el precio del producto, pero **bloquea cualquier intento de poner precios negativos**.
 
-Ejemplo:
+### 📦 Agregar Inventario (AddStock)
+Permite agregar unidades al almacén. No permite cantidades negativas.
 
-`csharp
-public decimal Price { get; private set; }
-public int Stock { get; private set; }
-`
+### 📤 Retirar Inventario (RemoveStock)
+Permite vender o sacar mercancía. Valida estrictamente que:
+- La cantidad a retirar sea mayor a cero.
+- Exista suficiente producto en el almacén (no podemos quedar en -5 productos).
 
-## Reglas de negocio
+## 🧪 Pruebas Unitarias (El Control de Calidad)
 
-### UpdatePrice
+¿Cómo sabemos que estas reglas realmente funcionan? Creamos "Pruebas Unitarias" (código que prueba nuestro código). Es como un robot que simula ser un usuario intentando hacer cosas prohibidas para ver si el sistema lo detiene.
 
-Permite modificar el precio del producto.
+Se creó el proyecto de pruebas: `ProductAPI.Domain.Tests`.
+Actualmente el robot comprueba de forma automática que:
+- Si alguien intenta poner un precio negativo, el sistema lanza una alarma (excepción).
+- Si alguien pone un precio válido, el sistema lo actualiza correctamente.
 
-No permite precios negativos.
-
-`csharp
-product.UpdatePrice(1500);
-`
-
-### AddStock
-
-Permite agregar unidades al inventario.
-
-No permite cantidades negativas.
-
-### RemoveStock
-
-Permite retirar unidades del inventario.
-
-Valida que:
-
-- La cantidad sea mayor a cero.
-- Exista suficiente inventario.
-
-## Entity Framework Core
-
-La entidad Product incluye un constructor protegido:
-
-`csharp
-protected Product() { }
-`
-
-Este constructor permitirá que Entity Framework Core pueda crear objetos al recuperar información de la base de datos.
-
-## Pruebas unitarias
-
-Se creó el proyecto:
-
-`	ext
-ProductAPI.Domain.Tests
-`
-
-utilizando **xUnit**.
-
-Actualmente se comprueba que:
-
-- Un precio negativo genera una excepción.
-- Un precio válido actualiza correctamente el producto.
-
-## Estado
-
+## Estado actual
 **COMPLETADA**
-
-El dominio está listo para continuar con la integración de persistencia mediante Entity Framework Core y SQL Server.
+Las reglas del negocio están blindadas y listas para la siguiente fase.

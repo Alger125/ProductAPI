@@ -1,94 +1,42 @@
-﻿# Entity Framework Core + SQL Server
+﻿# Entity Framework Core + SQL Server (La Bodega)
 
-Rama:
+Rama: `feature/ef-core-sqlserver`
 
-`feature/ef-core-sqlserver`
+## 📌 ¿Para qué sirve esta capa? (Explicación para no programadores)
+Imagina que esta capa de **Infraestructura** es el sótano donde están los **Archiveros** (Base de Datos), la **Planta de Luz** (Servicios Externos) y la sala de envíos. 
 
-## Objetivo
+Es la única parte de nuestro código que tiene permiso para conectarse con el mundo exterior: bases de datos, enviar correos reales, conectarse al sistema de cobros, etc. Las otras capas del sistema no saben cómo funciona el archivero, solo le dicen a Infraestructura: *"Guarda esto, por favor"*.
 
-Agregar persistencia de datos a ProductAPI utilizando:
+---
 
-- Entity Framework Core
-- SQL Server
-- Docker (para la instancia de base de datos)
-- LINQ (para consultas y operaciones sobre los datos)
+## 🛠️ Herramientas que usaremos en esta etapa
 
-La implementación debe mantenerse dentro de la arquitectura limpia del proyecto.
+### SQL Server (El Archivador Digital)
+- **Qué es:** Es el motor de base de datos relacional.
+- **En palabras sencillas:** Es un sistema gigante de tablas (como en Excel) donde la información se guarda permanentemente y no se borra cuando apagamos la computadora.
 
-## Capa principal
+### Docker (La Caja Mágica)
+- **Qué es:** Herramienta de contenedorización.
+- **En palabras sencillas:** En lugar de hacer que cada programador instale SQL Server en su computadora (y sufra porque las configuraciones son distintas), metemos el archivador dentro de una "caja virtual" (Contenedor). Cualquier persona que descargue el proyecto, con un solo clic, tendrá exactamente el mismo archivador funcionando en segundos.
 
-La configuración de acceso a datos se realizará principalmente dentro de:
+### Entity Framework Core (El Traductor)
+- **Qué es:** Un ORM (Object-Relational Mapper).
+- **En palabras sencillas:** Las bases de datos hablan un idioma (SQL) y nuestro código habla otro (C#). Entity Framework es un traductor en tiempo real. Nosotros escribimos código en C#, y él va y lo convierte a idioma de base de datos para buscar o guardar cosas en el archivador.
 
-```text
-ProductAPI.Infrastructure
-```
+### ApplicationDbContext (El Mapa del Archivador)
+- **Qué es:** La clase principal de EF Core.
+- **En palabras sencillas:** Es un índice que le dice al Traductor qué cosas (Entidades: Productos, Categorías, Marcas) van en qué cajones (Tablas). 
 
-La capa Domain debe permanecer independiente de Entity Framework Core y SQL Server.
+### Migraciones (El Historial de Mudanzas)
+- **Qué es:** El control de versiones de la base de datos.
+- **En palabras sencillas:** Si mañana decidimos que los Productos deben tener una "Fecha de caducidad", el archivador tiene que agregar una nueva columna. Las migraciones son las instrucciones paso a paso de cómo hacer esos cambios en el archivador sin perder los datos que ya están guardados.
 
-## Implementación planeada
+---
 
-### Entity Framework Core
-
-Agregar los paquetes necesarios:
-
-```text
-Microsoft.EntityFrameworkCore
-Microsoft.EntityFrameworkCore.SqlServer
-Microsoft.EntityFrameworkCore.Design
-```
-
-### ApplicationDbContext
-
-Crear el contexto principal de la aplicación.
-
-Deberá manejar las entidades:
-
-```text
-Products
-Categories
-Brands
-Reviews
-```
-
-### Relaciones
-
-Configurar las relaciones entre:
-
-```text
-Product
-├── Category
-├── Brand
-└── Reviews
-```
-
-### Consultas con LINQ
-
-- Consultas fuertemente tipadas sobre los `DbSet`.
-- Carga de relaciones mediante `.Include()` y `.ThenInclude()`.
-- Proyecciones eficientes (`.Select()`) y filtros (`.Where()`) traducidos a consultas SQL optimizadas.
-
-### SQL Server y Docker
-
-- Levantar la base de datos SQL Server mediante un contenedor Docker (usando imagen oficial de SQL Server o `docker-compose.yml`).
-- Configurar la cadena de conexión correspondiente dentro de la configuración de la API (`appsettings.json`).
-
-### Migraciones
-
-Crear la primera migración para generar la estructura de la base de datos.
-
-## Estado actual
+## 📝 Estado actual de esta etapa
 
 **EN PROGRESO**
-
-Actualmente la rama contiene la preparación y documentación de la arquitectura.
-
-Todavía están pendientes:
-
-- Dockerización de la base de datos SQL Server.
-- Entity Framework Core.
-- SQL Server.
-- ApplicationDbContext.
-- Configuraciones de entidades.
-- Consultas y repositorios con LINQ.
-- Migraciones.
-- Creación de la base de datos.
+Actualmente estamos configurando todas estas herramientas. Todavía está pendiente:
+- Crear la caja de Docker para el archivador.
+- Configurar al Traductor (Entity Framework Core).
+- Crear las tablas en el Archivador (Migraciones).
