@@ -1,35 +1,62 @@
 ﻿# Product API
 
-API robusta construida con **.NET 8**, **Clean Architecture** y el patrón **CQRS**.
+API desarrollada con **.NET 8**, siguiendo principios de **Clean Architecture**.
 
----
+## Arquitectura
 
-## 📖 Evolución del Proyecto (Diario de Desarrollo)
+El proyecto está dividido en las siguientes capas:
 
-### 🌿 Rama: eature/ef-core-sqlserver (EN PROGRESO)
-**Objetivo:** Conectar nuestro dominio puro con una base de datos real (SQL Server) usando Entity Framework Core, respetando la Arquitectura Limpia.
+- ProductAPI.Api
+- ProductAPI.Application
+- ProductAPI.Domain
+- ProductAPI.Infrastructure
+- ProductAPI.Domain.Tests
 
-**Pasos y Evolución:**
-1. *(Próximamente)* Configuración de Docker para levantar SQL Server en local.
-2. *(Próximamente)* Instalación de paquetes EF Core en la capa de Infraestructura.
-3. *(Próximamente)* Creación del ApplicationDbContext (el puente entre C# y la base de datos).
-4. *(Próximamente)* Generación y ejecución de la primera Migración.
+## Progreso del proyecto
 
----
+- [x] Estructura base de la solución.
+- [x] Entidades del dominio.
+- [x] Reglas de negocio de Product.
+- [x] Pruebas unitarias del dominio.
+- [ ] Entity Framework Core.
+- [ ] SQL Server.
+- [ ] ApplicationDbContext.
+- [ ] Migraciones.
+- [ ] CQRS con MediatR.
+- [ ] Endpoints CRUD.
+- [ ] FluentValidation.
+- [ ] Manejo global de errores.
+- [ ] Autenticación JWT.
+- [ ] Docker.
+- [ ] CI/CD.
 
-### 🌿 Rama: eature/product-domain (COMPLETADA)
-**Objetivo:** Crear el núcleo de la aplicación sin dependencias externas.
-**Logros:**
-- Se crearon las entidades base: Product, Category, Brand y Review.
-- Se aplicó el concepto de **Modelo de Dominio Rico**: las propiedades usan private set para encapsulamiento.
-- Se crearon métodos guardianes (ej. UpdatePrice, RemoveStock) que arrojan excepciones (ArgumentException, InvalidOperationException) si se violan las reglas de negocio.
-- Se configuró **xUnit** y se escribieron pruebas unitarias para asegurar que las reglas del Product funcionan correctamente.
+## Ramas desarrolladas
 
----
+### eature/product-domain
 
-## 🚀 Progreso del PRD General
-- [x] Estructura Base (Solución y capas).
-- [x] Dominio y Reglas de Negocio.
-- [ ] Bases de datos (EF Core + SQL Server).
-- [ ] MediatR y CQRS.
-- [ ] Endpoints de la API.
+Estado: **Completada**
+
+Implementa el núcleo del dominio de la aplicación:
+
+- Product
+- Category
+- Brand
+- Review
+- Reglas de negocio
+- Encapsulación
+- Pruebas unitarias con xUnit
+
+### eature/ef-core-sqlserver
+
+Estado: **En progreso**
+
+Su objetivo es conectar el dominio con SQL Server mediante Entity Framework Core.
+
+Pendiente:
+
+- Instalar Entity Framework Core.
+- Configurar SQL Server.
+- Crear ApplicationDbContext.
+- Configurar entidades.
+- Crear migraciones.
+- Generar la base de datos.
