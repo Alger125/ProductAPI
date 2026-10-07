@@ -1,4 +1,4 @@
-﻿# ProductAPI – feature/ef-core-sqlserver
+# ProductAPI – feature/ef-core-sqlserver
 
 ## 📌 Resumen de esta etapa
 Preparación y configuración de la persistencia de datos. Se conecta el dominio con SQL Server mediante Entity Framework Core, manteniendo la implementación aislada en la capa de Infraestructura, planificando la contenedorización con Docker y el uso de LINQ para consultas optimizadas.
@@ -19,6 +19,7 @@ Preparación y configuración de la persistencia de datos. Se conecta el dominio
 | Tecnología | Versión | Para qué se usa |
 |---|---|---|
 | .NET | 8.0 | Framework base |
+| C# | 12.0 | Lenguaje |
 | EF Core | (Pendiente) | Object-Relational Mapper (ORM) |
 | SQL Server | (Pendiente) | Motor de persistencia relacional |
 | Docker | (Pendiente) | Contenedorización de SQL Server y la API |
@@ -40,3 +41,14 @@ Preparación y configuración de la persistencia de datos. Se conecta el dominio
 
 ## ➡️ Siguiente etapa
 Desarrollo de los comandos y consultas (CQRS) con MediatR y LINQ.
+
+---
+
+## 🌐 Evolución Global del Proyecto
+El proyecto comenzó con la arquitectura en capas (`main`). Luego el núcleo de negocio encapsulado (`feature/product-domain`). Actualmente integrando persistencia (`feature/ef-core-sqlserver`).
+
+| Etapa | Rama | Qué se logró | Link a la rama |
+|---|---|---|---|
+| 1 | main | Estructura base Clean Architecture. | [main](https://github.com/Alger125/ProductAPI/tree/main) |
+| 2 | feature/product-domain | Entidades y reglas encapsuladas con xUnit. | [feature/product-domain](https://github.com/Alger125/ProductAPI/tree/feature/product-domain) |
+| 3 | feature/ef-core-sqlserver | (En progreso) EF Core, SQL Server, Docker y LINQ. | [feature/ef-core-sqlserver](https://github.com/Alger125/ProductAPI/tree/feature/ef-core-sqlserver) |
