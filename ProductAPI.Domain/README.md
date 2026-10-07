@@ -1,12 +1,95 @@
-﻿# Capa de Dominio (ProductAPI.Domain)
+﻿# Product Domain
 
-Esta capa es el **corazón** de la Arquitectura Limpia. No tiene ninguna dependencia externa (ni bases de datos, ni frameworks web).
+Rama:
 
-## 🛡️ Responsabilidades
-1. **Entidades de Negocio:** Clases principales como Product, Category, Brand y Review.
-2. **Reglas de Negocio:** Comportamiento centralizado mediante un Modelo de Dominio Rico (ej. UpdatePrice, RemoveStock). Las entidades se protegen a sí mismas validando su propio estado.
-3. **Excepciones de Dominio:** Errores específicos del negocio.
-4. **Interfaces de Repositorios:** Contratos que la capa de Infraestructura deberá implementar en el futuro.
+eature/product-domain
 
-## 📦 Estructura Actual
-* /Entities: Contiene las clases de dominio que mapean nuestro modelo relacional.
+## Objetivo
+
+Crear el núcleo de negocio de ProductAPI manteniendo la capa de dominio independiente de bases de datos, APIs y otros componentes externos.
+
+## Entidades creadas
+
+Se implementaron las siguientes entidades:
+
+- Product
+- Category
+- Brand
+- Review
+
+Estas clases se encuentran dentro de:
+
+`	ext
+ProductAPI.Domain/Entities
+`
+
+## Product
+
+La entidad Product contiene las principales reglas de negocio relacionadas con productos e inventario.
+
+Sus propiedades utilizan private set para evitar modificaciones directas desde otras capas.
+
+Ejemplo:
+
+`csharp
+public decimal Price { get; private set; }
+public int Stock { get; private set; }
+`
+
+## Reglas de negocio
+
+### UpdatePrice
+
+Permite modificar el precio del producto.
+
+No permite precios negativos.
+
+`csharp
+product.UpdatePrice(1500);
+`
+
+### AddStock
+
+Permite agregar unidades al inventario.
+
+No permite cantidades negativas.
+
+### RemoveStock
+
+Permite retirar unidades del inventario.
+
+Valida que:
+
+- La cantidad sea mayor a cero.
+- Exista suficiente inventario.
+
+## Entity Framework Core
+
+La entidad Product incluye un constructor protegido:
+
+`csharp
+protected Product() { }
+`
+
+Este constructor permitirá que Entity Framework Core pueda crear objetos al recuperar información de la base de datos.
+
+## Pruebas unitarias
+
+Se creó el proyecto:
+
+`	ext
+ProductAPI.Domain.Tests
+`
+
+utilizando **xUnit**.
+
+Actualmente se comprueba que:
+
+- Un precio negativo genera una excepción.
+- Un precio válido actualiza correctamente el producto.
+
+## Estado
+
+**COMPLETADA**
+
+El dominio está listo para continuar con la integración de persistencia mediante Entity Framework Core y SQL Server.
