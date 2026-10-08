@@ -1,101 +1,76 @@
-# ProductAPI – Rama feature/product-usecases
+# ProductAPI – Rama feature/error-handling-validation
 
-Implementación de la capa de Aplicación (casos de uso con CQRS y MediatR) y de la capa API (controladores HTTP) sobre el dominio y la persistencia ya existentes.
+Manejo global de excepciones (IExceptionHandler), validación de entrada con FluentValidation y ejecución automática de las validaciones mediante un Pipeline Behavior de MediatR, en una Arquitectura Limpia con .NET 8.
 
 ## Tabla de contenidos
 1. [Objetivo de la rama](#1-objetivo-de-la-rama)
-2. [Punto de partida y alcance](#2-punto-de-partida-y-alcance)
-3. [Visión general del flujo de una petición](#3-visión-general-del-flujo-de-una-petición)
+2. [Punto de partida y problema a resolver](#2-punto-de-partida-y-problema-a-resolver)
+3. [Visión general: dos niveles de defensa](#3-visión-general-dos-niveles-de-defensa)
 4. [Desarrollo paso a paso](#4-desarrollo-paso-a-paso)
-5. [CQRS y MediatR en detalle](#5-cqrs-y-mediatr-en-detalle)
-6. [Patrón Repositorio: interfaz e implementación](#6-patrón-repositorio-interfaz-e-implementación)
-7. [DTOs y mapeo manual con LINQ](#7-dtos-y-mapeo-manual-con-linq)
-8. [Controladores delgados](#8-controladores-delgados)
-9. [Inyección de dependencias](#9-inyección-de-dependencias)
-10. [Cómo probar la API](#10-cómo-probar-la-api)
-11. [Manejo de errores: comportamiento actual](#11-manejo-de-errores-comportamiento-actual)
-12. [Decisiones de diseño y limitaciones conocidas](#12-decisiones-de-diseño-y-limitaciones-conocidas)
-13. [Glosario](#13-glosario)
-14. [Próximos pasos](#14-próximos-pasos)
+5. [FluentValidation: validadores](#5-fluentvalidation-validadores)
+6. [Pipeline Behavior: el interceptor de MediatR](#6-pipeline-behavior-el-interceptor-de-mediatr)
+7. [Manejo global de excepciones](#7-manejo-global-de-excepciones)
+8. [Registro en Program.cs](#8-registro-en-programcs)
+9. [Respuestas HTTP y ProblemDetails](#9-respuestas-http-y-problemdetails)
+10. [Cómo probarlo](#10-cómo-probarlo)
+11. [Mapa de errores: qué devuelve cada situación](#11-mapa-de-errores-qué-devuelve-cada-situación)
+12. [Beneficios arquitectónicos](#12-beneficios-arquitectónicos)
+13. [Decisiones de diseño y limitaciones conocidas](#13-decisiones-de-diseño-y-limitaciones-conocidas)
+14. [Glosario](#14-glosario)
+15. [Próximos pasos](#15-próximos-pasos)
 
 ---
 
 ## 1. Objetivo de la rama
-Hasta esta rama el proyecto tenía:
-* Un dominio con reglas de negocio (Domain) → ver `feature/product-domain`.
-* Una persistencia con EF Core y SQL Server en Docker (Infrastructure) → ver `feature/ef-core-sqlserver`.
+Aumentar la madurez y resiliencia de la API. Antes de esta rama, cualquier error de validación o de reglas del dominio terminaba en un genérico `500 Internal Server Error`.
 
-Pero ninguna de las dos capas era accesible desde fuera. Esta rama las conecta:
-* Crea los casos de uso en `Application`, separando comandos (escritura) y consultas (lectura) con CQRS.
-* Define interfaces de repositorio en `Application` y sus implementaciones en `Infrastructure`.
-* Introduce DTOs para no exponer las entidades del dominio.
-* Expone todo mediante controladores HTTP en `Api`.
-* Cablea las dependencias en `Program.cs`.
+Se implementó:
 
-El flujo completo (Repositorio → Command/Query → DTO → Controller) se aplicó a las 4 entidades: `Products`, `Brands`, `Categories` y `Reviews`.
-
----
-
-## 2. Punto de partida y alcance
-
-| Incluye | No incluye |
-| --- | --- |
-| Comandos y consultas con MediatR | Validación de entrada (FluentValidation) |
-| Interfaces `I*Repository` en Application | Manejo global de excepciones |
-| Implementaciones `*Repository` en Infrastructure | Autenticación y autorización |
-| DTOs y mapeo manual con LINQ | Paginación y filtros |
-| Controladores para las 4 entidades | Pruebas de los casos de uso |
-| Registro de dependencias en `Program.cs` | |
-
-**Dependencias entre capas**
-```text
-Api ──────────► Application ──────────► Domain
- │                   ▲
- └──► Infrastructure ┘
-```
-
-| Capa | Contiene en esta rama | Depende de |
+| Pieza | Capa | Responsabilidad |
 | --- | --- | --- |
-| **Domain** | Entidades (sin cambios) | Nada |
-| **Application** | Commands, Queries, Handlers, DTOs, interfaces de repositorio | Domain, MediatR |
-| **Infrastructure** | Implementaciones de repositorio con EF Core | Application (y EF Core) |
-| **Api** | Controladores y `Program.cs` | Application, Infrastructure |
-
-**Regla de oro:** el centro (Application) nunca depende de la periferia (Infrastructure). Los handlers solo conocen la interfaz `IProductRepository`, nunca `ApplicationDbContext`.
+| `GlobalExceptionHandler` (IExceptionHandler) | **Api** | Capturar excepciones sin try/catch en los controladores y traducirlas a respuestas HTTP |
+| Validadores (`AbstractValidator<T>`) | **Application** | Declarar las reglas de entrada de cada comando |
+| `ValidationBehavior` (IPipelineBehavior) | **Application** | Ejecutar los validadores automáticamente antes de cada handler |
+| `ProblemDetails` | **Api** | Formato estándar de errores para los clientes |
 
 ---
 
-## 3. Visión general del flujo de una petición
+## 2. Punto de partida y problema a resolver
+Si se enviaba un producto con precio `-10`, la capa de dominio lanzaba una `ArgumentException`. Nadie la capturaba, el servidor abortaba la petición y el cliente recibía un `500`.
 
+Esto es una mala práctica por dos motivos:
+1. **Semántica HTTP incorrecta:** un `500` significa "el servidor falló", pero el error lo causó el cliente al enviar datos inválidos (corresponde un `400 Bad Request`).
+2. **Código repetido:** poner `try/catch` en cada controlador ensucia el código y viola el principio DRY (Don't Repeat Yourself).
+
+---
+
+## 3. Visión general: dos niveles de defensa
+
+Los datos inválidos se detienen en dos puntos distintos, con responsabilidades diferentes:
+
+| Nivel | Dónde | Qué valida | Ejemplo |
+| --- | --- | --- | --- |
+| **1. Validación de entrada** | Application (FluentValidation) | Que el comando venga completo y con formato correcto | Nombre vacío, Guid vacío |
+| **2. Reglas de negocio** | Domain (entidades) | Que el estado de la entidad sea siempre consistente | Precio negativo, stock insuficiente |
+
+El nivel 1 evita llegar al dominio con datos evidentemente malos. El nivel 2 garantiza que, aunque alguien llame al dominio desde otro lugar, las reglas se cumplan. No se duplican: se complementan.
+
+**Recorrido de una petición**
 ```mermaid
-sequenceDiagram
-    participant C as Cliente (Swagger/Front)
-    participant API as ProductsController
-    participant M as MediatR
-    participant H as CreateProductCommandHandler
-    participant R as IProductRepository
-    participant DB as SQL Server
-
-    C->>API: POST /api/products (JSON)
-    API->>M: Send(CreateProductCommand)
-    M->>H: Handle(command)
-    H->>H: new Product(...) (reglas del dominio)
-    H->>R: AddAsync(product)
-    R->>DB: INSERT (EF Core)
-    DB-->>R: OK
-    H-->>M: Id del producto
-    M-->>API: Id del producto
-    API-->>C: 200 OK { Message, ProductId }
+flowchart TD
+    A[Cliente: POST /api/Products] --> B[ProductsController]
+    B --> C[MediatR: Send command]
+    C --> D{ValidationBehavior<br/>¿hay errores de validación?}
+    D -- Sí --> E[Lanza ValidationException]
+    D -- No --> F[CreateProductCommandHandler]
+    F --> G{Dominio: Product<br/>¿cumple las reglas?}
+    G -- No --> H[Lanza ArgumentException /<br/>InvalidOperationException]
+    G -- Sí --> I[Repositorio guarda en SQL Server]
+    I --> J[200 OK]
+    E --> K[GlobalExceptionHandler]
+    H --> K
+    K --> L[400 Bad Request + ProblemDetails]
 ```
-
-Cada capa tiene una única responsabilidad:
-| Paso | Capa | Responsabilidad |
-| --- | --- | --- |
-| Recibir HTTP y responder HTTP | **Api** | Nada más |
-| Enrutar el mensaje al manejador correcto | **MediatR** | Desacoplar controlador y caso de uso |
-| Orquestar el caso de uso | **Application** (Handler) | Crear/consultar entidades y llamar al repositorio |
-| Reglas de negocio | **Domain** (Entidad) | Validar precio, stock, etc. |
-| Persistir | **Infrastructure** (Repositorio) | Traducir a consultas SQL con EF Core |
 
 ---
 
@@ -105,246 +80,212 @@ Cada capa tiene una única responsabilidad:
 ```bash
 git checkout main
 git pull origin main
-git checkout -b feature/product-usecases
+git checkout -b feature/error-handling-validation
 ```
 
-### 4.2 Instalar MediatR en la capa Application
+### 4.2 Instalar FluentValidation en la capa Application
 ```bash
-dotnet add ProductAPI.Application package MediatR
+dotnet add ProductAPI.Application package FluentValidation
+dotnet add ProductAPI.Application package FluentValidation.DependencyInjectionExtensions
 ```
 
-### 4.3 Definir las interfaces de repositorio (Application)
-Se crea una interfaz por entidad (`IProductRepository`, `IBrandRepository`, `ICategoryRepository`, `IReviewRepository`). Cada una declara únicamente las operaciones que los casos de uso necesitan, por ejemplo `AddAsync` y `GetAllAsync`.
+### 4.3 Crear los archivos
+Se crearon validadores, Behaviors y Middlewares en las capas correspondientes.
 
-### 4.4 Crear Commands, Queries y Handlers (Application)
-Para cada operación se crean dos archivos:
-| Archivo | Rol | Ejemplo |
-| --- | --- | --- |
-| `*Command.cs` / `*Query.cs` | El mensaje: un record que solo transporta datos | `CreateProductCommand` |
-| `*Handler.cs` | La lógica del caso de uso | `CreateProductCommandHandler` |
+### 4.4 Implementar, en este orden
+1. Validadores → sección 5
+2. ValidationBehavior → sección 6
+3. GlobalExceptionHandler → sección 7
+4. Registro en Program.cs → sección 8
 
-### 4.5 Crear los DTOs (Application)
-Un record por entidad con solo las propiedades que se quieren exponer (por ejemplo `ProductDto`).
-
-### 4.6 Implementar los repositorios (Infrastructure)
-Se crea `ProductRepository : IProductRepository` (y los equivalentes) usando `ApplicationDbContext`.
-
-### 4.7 Crear los controladores (Api)
-Un controlador por entidad: `ProductsController`, etc., que reciben el `IMediator` por constructor.
-
-### 4.8 Registrar dependencias en Program.cs
-Ver sección 9.
-
-### 4.9 Compilar y probar
+### 4.5 Compilar y probar
 ```bash
 dotnet build
 dotnet run --project ProductAPI.Api
 ```
 
-### 4.10 Commits y Pull Request
+### 4.6 Commits y Pull Request
 ```bash
 git add .
-git commit -m "feat: add use cases, repositories and controllers with CQRS"
-git push -u origin feature/product-usecases
+git commit -m "feat: add global exception handling and FluentValidation pipeline behavior"
+git push -u origin feature/error-handling-validation
 ```
 
 ---
 
-## 5. CQRS y MediatR en detalle
+## 5. FluentValidation: validadores
 
-### 5.1 ¿Qué es CQRS?
-*Command and Query Responsibility Segregation*: separar las operaciones que modifican el sistema de las que solo leen.
+**Archivo:** `ProductAPI.Application/Features/Products/Commands/CreateProduct/CreateProductCommandValidator.cs`
 
-| Tipo | Propósito | ¿Modifica datos? | Ejemplos |
-| --- | --- | --- | --- |
-| **Command** | Ordenar un cambio | Sí | Crear, actualizar, borrar |
-| **Query** | Hacer una pregunta | Nunca | Obtener todos, obtener por Id |
-
-**Beneficios:** cada caso de uso es una clase pequeña con una sola responsabilidad, es fácil de probar de forma aislada y se puede optimizar la lectura sin tocar la escritura.
-
-### 5.2 ¿Qué es MediatR?
-Librería que implementa el patrón Mediator. Funciona como un cartero: el controlador entrega un mensaje (`Command` o `Query`) y MediatR lo envía al handler que lo sabe procesar. El controlador no conoce al handler.
-
-### 5.3 Anatomía de un caso de uso
-1) El mensaje (record que solo transporta datos):
 ```csharp
-public record CreateProductCommand(/* datos necesarios */) : IRequest<Guid>;
-```
+using FluentValidation;
 
-2) El manejador:
-```csharp
-public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand, Guid>
+public class CreateProductCommandValidator : AbstractValidator<CreateProductCommand>
 {
-    private readonly IProductRepository _repository;
-    public CreateProductCommandHandler(IProductRepository repository) => _repository = repository;
-
-    public async Task<Guid> Handle(CreateProductCommand request, CancellationToken cancellationToken)
+    public CreateProductCommandValidator()
     {
-        // 1. Construir la entidad usando el constructor del dominio
-        // 2. Persistir mediante el repositorio
-        // 3. Devolver el Id
+        RuleFor(p => p.Name)
+            .NotEmpty().WithMessage("El nombre del producto es obligatorio.")
+            .MaximumLength(100);
+
+        RuleFor(p => p.Price)
+            .GreaterThan(0).WithMessage("El precio debe ser mayor a 0.");
+            
+        // ... más reglas (stock, categoryId, brandId)
     }
 }
 ```
 
-### 5.4 Convenciones de nombres
-| Elemento | Convención | Ejemplo |
+**Validación de entrada vs. regla de dominio**
+| | Validador (Application) | Dominio (Product) |
 | --- | --- | --- |
-| Comando | `Verbo` + `Entidad` + `Command` | `CreateProductCommand` |
-| Consulta | `Verbo` + `Entidad(es)` + `Query` | `GetProductsQuery` |
-| Handler | `Nombre del mensaje` + `Handler` | `GetProductsQueryHandler` |
+| **Precio** | `.GreaterThan(0)`: rechaza 0 | `UpdatePrice`: rechaza solo negativos |
+| **Qué protege** | La entrada de la API | El estado de la entidad |
+
+*Que el validador sea más estricto que el dominio es válido: el validador expresa una regla de entrada, y el dominio mantiene su invariante mínima.*
 
 ---
 
-## 6. Patrón Repositorio: interfaz e implementación
+## 6. Pipeline Behavior: el interceptor de MediatR
 
-### 6.1 El problema
-Si los handlers usaran `ApplicationDbContext` directamente, la lógica de negocio quedaría acoplada a EF Core y a SQL Server, y no se podría probar sin una base de datos.
+Tener un validador no sirve si nadie lo ejecuta. En lugar de inyectarlo en cada handler y llamar a `.Validate()`, se usa un **Pipeline Behavior**: un middleware interno de MediatR que envuelve a todos los handlers.
 
-### 6.2 La solución
-| Dónde | Qué | Responsabilidad |
-| --- | --- | --- |
-| **Application** | `IProductRepository` (interfaz) | Declara qué operaciones se necesitan, sin saber cómo |
-| **Infrastructure**| `ProductRepository` (clase) | Implementa la interfaz con EF Core y consultas reales |
+**Archivo:** `ProductAPI.Application/Behaviors/ValidationBehavior.cs`
 
-### 6.3 Inversión de dependencias
-Infrastructure referencia a Application (no al revés). La interfaz vive en la capa interna y la implementación en la externa: ese es el principio de inversión de dependencias (la D de SOLID).
+### 6.1 Qué hace
+1. Recibe el mensaje (Command o Query).
+2. Busca los validadores registrados para ese tipo de mensaje.
+3. Los ejecuta en paralelo.
+4. Si hay errores, lanza una `ValidationException` y corta el flujo: el handler nunca se ejecuta.
+5. Si no hay errores, llama a `next()` para continuar hacia el handler.
 
 ---
 
-## 7. DTOs y mapeo manual con LINQ
+## 7. Manejo global de excepciones
 
-### 7.1 Por qué no devolver la entidad
-Las entidades del dominio no deben salir por la API porque:
-* Su estructura puede cambiar por razones internas sin que el contrato de la API deba cambiar.
-* Pueden contener propiedades de navegación que provocan ciclos de serialización o exponen datos no deseados.
-* Acoplan a los clientes con el modelo de dominio.
+A partir de .NET 8, la forma recomendada de manejar excepciones de forma centralizada es implementar `IExceptionHandler`.
 
-En su lugar se devuelve un **DTO (Data Transfer Object)**: un record con solo lo que se quiere mostrar.
+**Archivo:** `ProductAPI.Api/Middlewares/GlobalExceptionHandler.cs`
 
-### 7.2 Mapeo con Select
-En `GetProductsQueryHandler`, las entidades se transforman a DTOs con el operador `Select` de LINQ:
+### 7.1 Mapeo de excepciones a códigos HTTP
+| Excepción | Origen | Código | Title |
+| --- | --- | --- | --- |
+| `ValidationException` | ValidationBehavior | 400 | Error de validación |
+| `ArgumentException` | Dominio (precio, stock) | 400 | Error de regla de negocio |
+| `InvalidOperationException` | Dominio (stock insuficiente) | 400 | Error de regla de negocio |
+| Cualquier otra | Base de datos, bugs, etc. | 500 | Error interno del servidor |
+
+---
+
+## 8. Registro en Program.cs
+
 ```csharp
-var productDtos = products.Select(p => new ProductDto(
-    p.Id, p.Name, p.Description, p.Price, p.Stock, p.CategoryId, p.BrandId
-));
+// --- Servicios ---
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+
+// Registrar todos los validadores del ensamblado de Application
+builder.Services.AddValidatorsFromAssembly(typeof(CreateProductCommand).Assembly);
+
+// MediatR + el behavior de validación
+builder.Services.AddMediatR(cfg => {
+    cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly);
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+});
+
+// --- Pipeline HTTP ---
+var app = builder.Build();
+
+app.UseExceptionHandler(); // debe ir ANTES del resto de middlewares
+
+// ...
 ```
 
-### 7.3 Mapeo manual vs. AutoMapper
-| | Manual (LINQ) | AutoMapper |
-| --- | --- | --- |
-| **Control** | Total y explícito | Basado en convenciones y configuración |
-| **Rendimiento**| Sin reflexión en tiempo de ejecución | Ligeramente menor |
-| **Errores** | Se detectan al compilar | Algunos se detectan solo al ejecutar |
-| **Recomendado**| Proyectos pequeños o medianos | Modelos con muchas propiedades |
-
-*Se eligió el mapeo manual por transparencia y control.*
-
 ---
 
-## 8. Controladores delgados
-La capa API queda mínima: cada acción tiene pocas líneas.
+## 9. Respuestas HTTP y ProblemDetails
 
-```csharp
-[HttpPost]
-public async Task<IActionResult> CreateProduct([FromBody] CreateProductCommand command)
+ProblemDetails es el formato estándar para describir errores en APIs HTTP (definido en RFC 7807, actualizado por RFC 9457). Da a los clientes web y móviles una estructura de error predecible.
+
+### 9.1 Ejemplo de respuesta de validación
+```json
 {
-    var productId = await _mediator.Send(command); // 1. Delegar a MediatR
-    return Ok(new { Message = "Producto creado", ProductId = productId }); // 2. Responder 200 OK
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "title": "Error de validación de datos de entrada",
+  "status": 400,
+  "detail": "Uno o más campos tienen errores de validación.",
+  "errors": [
+    {
+      "propertyName": "Name",
+      "errorMessage": "El nombre del producto es obligatorio."
+    }
+  ]
 }
 ```
 
-| El controlador hace | El controlador no hace |
-| --- | --- |
-| Recibir y deserializar HTTP | Validar reglas de negocio |
-| Enviar el mensaje por MediatR | Acceder a la base de datos |
-| Traducir el resultado a HTTP | Conocer SQL o EF Core |
-
 ---
 
-## 9. Inyección de dependencias
-Para conectar interfaces, implementaciones y handlers al arrancar, se configura `Program.cs`:
+## 10. Cómo probarlo
 
-```csharp
-// Cuando alguien pida un IProductRepository, entregar un ProductRepository
-builder.Services.AddScoped<IProductRepository, ProductRepository>();
-
-// Registrar MediatR y descubrir todos los handlers del ensamblado
-builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly));
+### 10.1 Prueba principal: varios errores a la vez
+En Swagger, abrir `POST /api/Products`. Enviar:
+```json
+{
+  "name": "",
+  "description": "Prueba",
+  "price": -1500,
+  "stock": -5,
+  "categoryId": "00000000-0000-0000-0000-000000000000",
+  "brandId": "00000000-0000-0000-0000-000000000000"
+}
 ```
-
-**Por qué AddScoped:**
-Un repositorio que usa el DbContext debe tener el mismo ciclo de vida o menor; Scoped (una instancia por petición HTTP) es la opción estándar porque coincide con el ciclo de vida del DbContext.
+**Resultado esperado:** `400 Bad Request` con un `ProblemDetails` que lista todos los errores a la vez, en lugar de un `500`.
 
 ---
 
-## 10. Cómo probar la API
+## 11. Mapa de errores: qué devuelve cada situación
 
-### 10.1 Requisitos
-* SQL Server en Docker corriendo (`docker ps`).
-* Migraciones aplicadas.
-
-### 10.2 Ejecutar
-```bash
-dotnet run --project ProductAPI.Api
-```
-Abrir `http://localhost:<puerto>/swagger`.
-
-### 10.3 Orden obligatorio de creación
-Las bases de datos relacionales exigen integridad referencial. Un `Product` necesita un `CategoryId` y un `BrandId` que existan.
-
-| Paso | Endpoint | Acción |
-| --- | --- | --- |
-| 1 | `Categories` → POST | Crear una categoría y copiar el Id devuelto |
-| 2 | `Brands` → POST | Crear una marca y copiar el Id devuelto |
-| 3 | `Products` → POST | Crear el producto con esos dos Ids |
-| 4 | `Products` → GET | Verificar que aparece en el listado |
-
-### 10.4 Casos de prueba recomendados
-| Caso | Entrada | Resultado actual |
-| --- | --- | --- |
-| Flujo feliz | Ids válidos de categoría y marca | 200 OK con el Id del producto |
-| Id inexistente | Guid aleatorio | 500 por violación de llave foránea |
-| Precio negativo| Price: -10 | 500 (la excepción del dominio no se traduce) |
-| Stock negativo | Stock: -1 | 500 (ídem) |
+| Situación | Dónde se detecta | Excepción | Respuesta |
+| --- | --- | --- | --- |
+| Nombre vacío / precio ≤ 0 | ValidationBehavior | ValidationException | 400 + lista de errores |
+| Precio negativo en dominio | Product.UpdatePrice | ArgumentException | 400 + mensaje |
+| Retirar más stock del | Product.RemoveStock | InvalidOperationException | 400 + mensaje |
+| JSON mal formado | Model binding de ASP.NET | (ninguna) | 400 automático |
+| CategoryId inexistente | Base de datos (FK) | Excepción de EF Core | 500 |
+| Error inesperado | Cualquier capa | Otra excepción | 500 |
 
 ---
 
-## 11. Manejo de errores: comportamiento actual
-Todavía no hay validación de entrada ni un manejador global de excepciones. Por eso, tanto los errores de base de datos como las excepciones de negocio (`ArgumentException`, `InvalidOperationException`) devuelven un genérico **500 Internal Server Error**.
-
-Las reglas de negocio sí se cumplen (el dato inválido nunca se guarda), pero el cliente recibe un error genérico en lugar de un mensaje útil (como un 400 Bad Request). Esto se resolverá en los próximos pasos.
+## 12. Beneficios arquitectónicos
+* **Fail-fast:** las peticiones inválidas se rechazan antes de crear entidades o abrir conexiones.
+* **Controladores puros:** No hay `if (!ModelState.IsValid)` ni `try/catch`.
+* **Manejo centralizado:** para enviar los errores a Sentry o DataDog, solo se modifica el `GlobalExceptionHandler`.
+* **Respuestas consistentes:** todos los errores salen en el mismo formato `ProblemDetails`.
 
 ---
 
-## 12. Decisiones de diseño y limitaciones conocidas
-
+## 13. Decisiones de diseño y limitaciones conocidas
 | Tema | Estado actual | Mejora sugerida |
 | --- | --- | --- |
-| Código al crear | `200 OK` | `201 Created` con encabezado Location |
-| Errores de negocio | `500` | Middleware global que mapee a 400, 404 o 409 con `ProblemDetails` |
-| Validación | No existe | `FluentValidation` con un pipeline behavior de MediatR |
-| Existencia de IDs | Se detecta en la BD | Verificar en el handler y devolver 404 |
-| GetAll sin límite | Devuelve todos | Paginación (page, pageSize) |
-| Pruebas | No hay para handlers | Probar handlers con repositorios simulados (mocks) |
+| Excepciones nativas a 400 | Atrapa genéricas como `ArgumentException` | Crear excepciones propias de dominio (ej. `DomainException`) |
+| Stock insuficiente | Responde 400 | `409 Conflict` suele describir mejor un conflicto |
+| Id inexistente | Sigue siendo 500 (FK de BD) | Verificar existencia en el handler y responder `404` |
 
 ---
 
-## 13. Glosario
+## 14. Glosario
 | Término | Definición |
 | --- | --- |
-| **CQRS** | Separar operaciones de escritura (Commands) y lectura (Queries) |
-| **Mediator** | Patrón que desacopla al emisor de un mensaje de quien lo procesa |
-| **Repositorio** | Abstracción que oculta cómo se persisten y recuperan las entidades |
-| **DTO** | Objeto que transporta solo los datos que se desean exponer |
-| **Inversión de dependencias** | Las capas internas definen interfaces; las externas las implementan |
+| **IExceptionHandler** | Interfaz de .NET 8 para manejar excepciones de forma centralizada |
+| **ProblemDetails** | Formato estándar JSON para describir errores en APIs HTTP |
+| **FluentValidation** | Librería para declarar reglas de validación encadenadas |
+| **Pipeline Behavior** | Componente de MediatR que se ejecuta antes/después de un handler |
 
 ---
 
-## 14. Próximos pasos
-* Manejo global de excepciones que convierta errores de dominio en respuestas 400, 404 y 409.
-* Validación de entrada con FluentValidation integrada a MediatR.
+## 15. Próximos pasos
+* Excepciones de dominio propias para mapear códigos HTTP con precisión (400, 404, 409).
+* Verificar la existencia de `CategoryId` y `BrandId` y responder `404`.
+* Pruebas unitarias de validadores y del `ValidationBehavior`.
 * `201 Created` en las operaciones de creación.
-* Casos de uso de actualización y eliminación.
-* Pruebas unitarias de los handlers.
-* Paginación en las consultas de listado.
+* Paginación y filtros en las consultas de listado.
