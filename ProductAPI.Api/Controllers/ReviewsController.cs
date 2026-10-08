@@ -8,6 +8,7 @@ namespace ProductAPI.Api.Controllers;
 public class ReviewsController : ControllerBase {
     private readonly IMediator _mediator;
     public ReviewsController(IMediator mediator) { _mediator = mediator; }
-    [HttpPost] public async Task<IActionResult> Create([FromBody] CreateReviewCommand command) => Ok(new { Id = await _mediator.Send(command) });
+    [HttpPost] public async Task<IActionResult> Create([FromBody] CreateReviewCommand command) => StatusCode(StatusCodes.Status201Created, new { Id = await _mediator.Send(command) });
     [HttpGet] public async Task<IActionResult> GetAll() => Ok(await _mediator.Send(new GetReviewsQuery()));
 }
+

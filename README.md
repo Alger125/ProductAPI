@@ -1,76 +1,57 @@
-# ProductAPI – Rama feature/error-handling-validation
+# ProductAPI – Rama feature/domain-exceptions
 
-Manejo global de excepciones (IExceptionHandler), validación de entrada con FluentValidation y ejecución automática de las validaciones mediante un Pipeline Behavior de MediatR, en una Arquitectura Limpia con .NET 8.
+Excepciones propias del dominio (`DomainException`, `NotFoundException`), su traducción a códigos HTTP en el manejador global de errores y respuestas 201 Created en los controladores, para alinear la API con los estándares REST.
 
 ## Tabla de contenidos
 1. [Objetivo de la rama](#1-objetivo-de-la-rama)
 2. [Punto de partida y problema a resolver](#2-punto-de-partida-y-problema-a-resolver)
-3. [Visión general: dos niveles de defensa](#3-visión-general-dos-niveles-de-defensa)
+3. [Resumen de cambios](#3-resumen-de-cambios)
 4. [Desarrollo paso a paso](#4-desarrollo-paso-a-paso)
-5. [FluentValidation: validadores](#5-fluentvalidation-validadores)
-6. [Pipeline Behavior: el interceptor de MediatR](#6-pipeline-behavior-el-interceptor-de-mediatr)
-7. [Manejo global de excepciones](#7-manejo-global-de-excepciones)
-8. [Registro en Program.cs](#8-registro-en-programcs)
-9. [Respuestas HTTP y ProblemDetails](#9-respuestas-http-y-problemdetails)
-10. [Cómo probarlo](#10-cómo-probarlo)
-11. [Mapa de errores: qué devuelve cada situación](#11-mapa-de-errores-qué-devuelve-cada-situación)
-12. [Beneficios arquitectónicos](#12-beneficios-arquitectónicos)
-13. [Decisiones de diseño y limitaciones conocidas](#13-decisiones-de-diseño-y-limitaciones-conocidas)
-14. [Glosario](#14-glosario)
-15. [Próximos pasos](#15-próximos-pasos)
+5. [Excepciones personalizadas del dominio](#5-excepciones-personalizadas-del-dominio)
+6. [Refactorización de la entidad Product](#6-refactorización-de-la-entidad-product)
+7. [Cambios en GlobalExceptionHandler](#7-cambios-en-globalexceptionhandler)
+8. [Respuestas 201 Created en los controladores](#8-respuestas-201-created-en-los-controladores)
+9. [Pruebas](#9-pruebas)
+10. [Mapa de respuestas HTTP](#10-mapa-de-respuestas-http)
+11. [Qué se gana con estos cambios](#11-qué-se-gana-con-estos-cambios)
+12. [Decisiones de diseño y limitaciones conocidas](#12-decisiones-de-diseño-y-limitaciones-conocidas)
+13. [Glosario](#13-glosario)
+14. [Próximos pasos](#14-próximos-pasos)
 
 ---
 
 ## 1. Objetivo de la rama
-Aumentar la madurez y resiliencia de la API. Antes de esta rama, cualquier error de validación o de reglas del dominio terminaba en un genérico `500 Internal Server Error`.
-
-Se implementó:
-
-| Pieza | Capa | Responsabilidad |
-| --- | --- | --- |
-| `GlobalExceptionHandler` (IExceptionHandler) | **Api** | Capturar excepciones sin try/catch en los controladores y traducirlas a respuestas HTTP |
-| Validadores (`AbstractValidator<T>`) | **Application** | Declarar las reglas de entrada de cada comando |
-| `ValidationBehavior` (IPipelineBehavior) | **Application** | Ejecutar los validadores automáticamente antes de cada handler |
-| `ProblemDetails` | **Api** | Formato estándar de errores para los clientes |
+Refinar la forma en que la API responde y comunica errores:
+* Reemplazar las excepciones genéricas de .NET en el dominio por excepciones semánticas propias.
+* Hacer que el `GlobalExceptionHandler` entienda ese lenguaje de negocio y responda con 400 o 404.
+* Devolver `201 Created` (en lugar de `200 OK`) cuando una petición POST crea un recurso.
 
 ---
 
 ## 2. Punto de partida y problema a resolver
-Si se enviaba un producto con precio `-10`, la capa de dominio lanzaba una `ArgumentException`. Nadie la capturaba, el servidor abortaba la petición y el cliente recibía un `500`.
+Al terminar `feature/error-handling-validation`, el dominio lanzaba `ArgumentException` e `InvalidOperationException` para representar reglas de negocio rotas, y el manejador global las traducía a 400.
 
-Esto es una mala práctica por dos motivos:
-1. **Semántica HTTP incorrecta:** un `500` significa "el servidor falló", pero el error lo causó el cliente al enviar datos inválidos (corresponde un `400 Bad Request`).
-2. **Código repetido:** poner `try/catch` en cada controlador ensucia el código y viola el principio DRY (Don't Repeat Yourself).
+Eso tiene un problema de ambigüedad: esas dos excepciones las usa todo el framework y las librerías de terceros, no solo nuestro dominio.
+
+| Situación | Excepción | Respuesta antes de esta rama |
+| --- | --- | --- |
+| Precio negativo en Product | `ArgumentException` | 400 (correcto) |
+| Bug en componente del framework | `InvalidOperationException` | 400 (incorrecto: es un error del servidor) |
+
+El manejador no podía distinguir un error de negocio de un error de programación. Con una excepción propia, un `DomainException` siempre significa "se rompió una regla de negocio".
+
+Además, las creaciones respondían `200 OK`, cuando el estándar HTTP indica `201 Created`.
 
 ---
 
-## 3. Visión general: dos niveles de defensa
+## 3. Resumen de cambios
 
-Los datos inválidos se detienen en dos puntos distintos, con responsabilidades diferentes:
-
-| Nivel | Dónde | Qué valida | Ejemplo |
+| # | Cambio | Capa | Archivos |
 | --- | --- | --- | --- |
-| **1. Validación de entrada** | Application (FluentValidation) | Que el comando venga completo y con formato correcto | Nombre vacío, Guid vacío |
-| **2. Reglas de negocio** | Domain (entidades) | Que el estado de la entidad sea siempre consistente | Precio negativo, stock insuficiente |
-
-El nivel 1 evita llegar al dominio con datos evidentemente malos. El nivel 2 garantiza que, aunque alguien llame al dominio desde otro lugar, las reglas se cumplan. No se duplican: se complementan.
-
-**Recorrido de una petición**
-```mermaid
-flowchart TD
-    A[Cliente: POST /api/Products] --> B[ProductsController]
-    B --> C[MediatR: Send command]
-    C --> D{ValidationBehavior<br/>¿hay errores de validación?}
-    D -- Sí --> E[Lanza ValidationException]
-    D -- No --> F[CreateProductCommandHandler]
-    F --> G{Dominio: Product<br/>¿cumple las reglas?}
-    G -- No --> H[Lanza ArgumentException /<br/>InvalidOperationException]
-    G -- Sí --> I[Repositorio guarda en SQL Server]
-    I --> J[200 OK]
-    E --> K[GlobalExceptionHandler]
-    H --> K
-    K --> L[400 Bad Request + ProblemDetails]
-```
+| 1 | Crear `DomainException` y `NotFoundException` | **Domain** | `Exceptions/` |
+| 2 | `Product` lanza `DomainException` en lugar de nativas | **Domain** | `Entities/Product.cs` |
+| 3 | El manejador global traduce a 400 y 404 | **Api** | `Middlewares/GlobalExceptionHandler.cs` |
+| 4 | Los POST devuelven `201 Created` | **Api** | 4 controladores |
 
 ---
 
@@ -80,212 +61,165 @@ flowchart TD
 ```bash
 git checkout main
 git pull origin main
-git checkout -b feature/error-handling-validation
+git checkout -b feature/domain-exceptions
 ```
 
-### 4.2 Instalar FluentValidation en la capa Application
+### 4.2 Crear la carpeta y las excepciones (Domain)
 ```bash
-dotnet add ProductAPI.Application package FluentValidation
-dotnet add ProductAPI.Application package FluentValidation.DependencyInjectionExtensions
+mkdir ProductAPI.Domain/Exceptions
 ```
 
-### 4.3 Crear los archivos
-Se crearon validadores, Behaviors y Middlewares en las capas correspondientes.
+### 4.3 Refactorizar Product
+Reemplazar excepciones nativas por `DomainException`.
 
-### 4.4 Implementar, en este orden
-1. Validadores → sección 5
-2. ValidationBehavior → sección 6
-3. GlobalExceptionHandler → sección 7
-4. Registro en Program.cs → sección 8
+### 4.4 Actualizar el GlobalExceptionHandler (Api)
+Agregar las ramas para `DomainException` y `NotFoundException`.
 
-### 4.5 Compilar y probar
-```bash
-dotnet build
-dotnet run --project ProductAPI.Api
-```
+### 4.5 Cambiar los controladores a 201 Created
+Modificar la acción POST de todos los controladores.
 
 ### 4.6 Commits y Pull Request
 ```bash
 git add .
-git commit -m "feat: add global exception handling and FluentValidation pipeline behavior"
-git push -u origin feature/error-handling-validation
+git commit -m "feat: add domain exceptions and return 201 Created on POST"
+git push -u origin feature/domain-exceptions
 ```
 
 ---
 
-## 5. FluentValidation: validadores
+## 5. Excepciones personalizadas del dominio
+Ubicación: `ProductAPI.Domain/Exceptions/`
 
-**Archivo:** `ProductAPI.Application/Features/Products/Commands/CreateProduct/CreateProductCommandValidator.cs`
-
-```csharp
-using FluentValidation;
-
-public class CreateProductCommandValidator : AbstractValidator<CreateProductCommand>
-{
-    public CreateProductCommandValidator()
-    {
-        RuleFor(p => p.Name)
-            .NotEmpty().WithMessage("El nombre del producto es obligatorio.")
-            .MaximumLength(100);
-
-        RuleFor(p => p.Price)
-            .GreaterThan(0).WithMessage("El precio debe ser mayor a 0.");
-            
-        // ... más reglas (stock, categoryId, brandId)
-    }
-}
-```
-
-**Validación de entrada vs. regla de dominio**
-| | Validador (Application) | Dominio (Product) |
+| Excepción | Cuándo se usa | Respuesta HTTP |
 | --- | --- | --- |
-| **Precio** | `.GreaterThan(0)`: rechaza 0 | `UpdatePrice`: rechaza solo negativos |
-| **Qué protege** | La entrada de la API | El estado de la entidad |
+| `DomainException` | Se rompe una regla de negocio | 400 Bad Request |
+| `NotFoundException`| Se busca un identificador que no existe | 404 Not Found |
 
-*Que el validador sea más estricto que el dominio es válido: el validador expresa una regla de entrada, y el dominio mantiene su invariante mínima.*
+**Sobre "el dominio no debe depender de excepciones del sistema"**
+Las nuevas excepciones siguen heredando de `System.Exception` (que es parte de la biblioteca base de .NET). Lo que cambia no es la dependencia técnica, sino el **significado**:
 
----
-
-## 6. Pipeline Behavior: el interceptor de MediatR
-
-Tener un validador no sirve si nadie lo ejecuta. En lugar de inyectarlo en cada handler y llamar a `.Validate()`, se usa un **Pipeline Behavior**: un middleware interno de MediatR que envuelve a todos los handlers.
-
-**Archivo:** `ProductAPI.Application/Behaviors/ValidationBehavior.cs`
-
-### 6.1 Qué hace
-1. Recibe el mensaje (Command o Query).
-2. Busca los validadores registrados para ese tipo de mensaje.
-3. Los ejecuta en paralelo.
-4. Si hay errores, lanza una `ValidationException` y corta el flujo: el handler nunca se ejecuta.
-5. Si no hay errores, llama a `next()` para continuar hacia el handler.
+| | `ArgumentException` | `DomainException` |
+| --- | --- | --- |
+| **Quién las lanza** | Dominio, framework y librerías | Solo el dominio |
+| **Significado** | Genérico | "Regla de negocio rota" |
+| **Mapeo a 400 seguro** | No (hay falsos positivos) | Sí |
 
 ---
 
-## 7. Manejo global de excepciones
+## 6. Refactorización de la entidad Product
 
-A partir de .NET 8, la forma recomendada de manejar excepciones de forma centralizada es implementar `IExceptionHandler`.
-
-**Archivo:** `ProductAPI.Api/Middlewares/GlobalExceptionHandler.cs`
-
-### 7.1 Mapeo de excepciones a códigos HTTP
-| Excepción | Origen | Código | Title |
+**Tabla de equivalencias**
+| Método | Regla | Antes | Ahora |
 | --- | --- | --- | --- |
-| `ValidationException` | ValidationBehavior | 400 | Error de validación |
-| `ArgumentException` | Dominio (precio, stock) | 400 | Error de regla de negocio |
-| `InvalidOperationException` | Dominio (stock insuficiente) | 400 | Error de regla de negocio |
-| Cualquier otra | Base de datos, bugs, etc. | 500 | Error interno del servidor |
+| `UpdatePrice` | Precio no negativo | `ArgumentException` | `DomainException` |
+| `AddStock` | Cantidad no negativa| `ArgumentException` | `DomainException` |
+| `RemoveStock` | Cantidad mayor a 0 | `ArgumentException` | `DomainException` |
+| `RemoveStock` | Stock suficiente | `InvalidOperationException` | `DomainException` |
+
+Las reglas no cambian; cambia solo el tipo de excepción.
 
 ---
 
-## 8. Registro en Program.cs
+## 7. Cambios en GlobalExceptionHandler
 
-```csharp
-// --- Servicios ---
-builder.Services.AddProblemDetails();
-builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+El manejador entiende las dos excepciones nuevas:
 
-// Registrar todos los validadores del ensamblado de Application
-builder.Services.AddValidatorsFromAssembly(typeof(CreateProductCommand).Assembly);
+| Excepción | Código | Estado |
+| --- | --- | --- |
+| `NotFoundException` | 404 Not Found | Listo; se usará cuando existan consultas por Id |
+| `DomainException` | 400 Bad Request | Activo |
+| `ValidationException` | 400 Bad Request | Activo |
+| Cualquier otra | 500 Internal Server Error | Activo |
 
-// MediatR + el behavior de validación
-builder.Services.AddMediatR(cfg => {
-    cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly);
-    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
-});
-
-// --- Pipeline HTTP ---
-var app = builder.Build();
-
-app.UseExceptionHandler(); // debe ir ANTES del resto de middlewares
-
-// ...
+```mermaid
+flowchart TD
+    A[Excepción lanzada] --> B[GlobalExceptionHandler]
+    B --> C{¿Qué tipo es?}
+    C -- NotFoundException --> D[404 Not Found]
+    C -- DomainException --> E[400 Bad Request]
+    C -- ValidationException --> F[400 Bad Request + errors]
+    C -- Otra --> G[500 Internal Server Error]
+    D --> H[Respuesta ProblemDetails]
+    E --> H
+    F --> H
+    G --> H
 ```
 
 ---
 
-## 9. Respuestas HTTP y ProblemDetails
+## 8. Respuestas 201 Created en los controladores
 
-ProblemDetails es el formato estándar para describir errores en APIs HTTP (definido en RFC 7807, actualizado por RFC 9457). Da a los clientes web y móviles una estructura de error predecible.
+### 8.1 Por qué 201 y no 200
+| Código | Significado | Cuándo usarlo |
+| --- | --- | --- |
+| `200 OK` | La petición tuvo éxito | Lecturas y actualizaciones |
+| `201 Created` | Se creó un recurso nuevo | Respuesta de un POST que crea algo |
 
-### 9.1 Ejemplo de respuesta de validación
-```json
-{
-  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
-  "title": "Error de validación de datos de entrada",
-  "status": 400,
-  "detail": "Uno o más campos tienen errores de validación.",
-  "errors": [
-    {
-      "propertyName": "Name",
-      "errorMessage": "El nombre del producto es obligatorio."
-    }
-  ]
-}
-```
-
----
-
-## 10. Cómo probarlo
-
-### 10.1 Prueba principal: varios errores a la vez
-En Swagger, abrir `POST /api/Products`. Enviar:
-```json
-{
-  "name": "",
-  "description": "Prueba",
-  "price": -1500,
-  "stock": -5,
-  "categoryId": "00000000-0000-0000-0000-000000000000",
-  "brandId": "00000000-0000-0000-0000-000000000000"
-}
-```
-**Resultado esperado:** `400 Bad Request` con un `ProblemDetails` que lista todos los errores a la vez, en lugar de un `500`.
-
----
-
-## 11. Mapa de errores: qué devuelve cada situación
-
-| Situación | Dónde se detecta | Excepción | Respuesta |
+### 8.2 Controladores actualizados
+| Controlador | Acción POST | Código anterior | Código actual |
 | --- | --- | --- | --- |
-| Nombre vacío / precio ≤ 0 | ValidationBehavior | ValidationException | 400 + lista de errores |
-| Precio negativo en dominio | Product.UpdatePrice | ArgumentException | 400 + mensaje |
-| Retirar más stock del | Product.RemoveStock | InvalidOperationException | 400 + mensaje |
-| JSON mal formado | Model binding de ASP.NET | (ninguna) | 400 automático |
-| CategoryId inexistente | Base de datos (FK) | Excepción de EF Core | 500 |
-| Error inesperado | Cualquier capa | Otra excepción | 500 |
+| `ProductsController` | Crear producto | 200 | 201 |
+| `BrandsController` | Crear marca | 200 | 201 |
+| `CategoriesController`| Crear categoría | 200 | 201 |
+| `ReviewsController` | Crear reseña | 200 | 201 |
+
+*(La respuesta ideal incluiría `Location` y `CreatedAtAction`, pero esto requiere los endpoints GET por Id que aún no existen).*
 
 ---
 
-## 12. Beneficios arquitectónicos
-* **Fail-fast:** las peticiones inválidas se rechazan antes de crear entidades o abrir conexiones.
-* **Controladores puros:** No hay `if (!ModelState.IsValid)` ni `try/catch`.
-* **Manejo centralizado:** para enviar los errores a Sentry o DataDog, solo se modifica el `GlobalExceptionHandler`.
-* **Respuestas consistentes:** todos los errores salen en el mismo formato `ProblemDetails`.
+## 9. Pruebas
+
+Los tests de dominio deberían ser actualizados para esperar una `DomainException` en vez de excepciones nativas.
+
+Para probar la respuesta HTTP en Swagger, el resultado en creaciones exitosas ahora marca `201 Created`. Los errores de validación de entradas siguen saliendo como `400` capturados por FluentValidation en la capa de Aplicación.
 
 ---
 
-## 13. Decisiones de diseño y limitaciones conocidas
+## 10. Mapa de respuestas HTTP
+
+| Situación | Excepción | Código |
+| --- | --- | --- |
+| Recurso creado correctamente (POST) | (ninguna) | **201 Created** |
+| Datos de entrada inválidos (validador) | `ValidationException` | **400** |
+| Regla de negocio rota en el dominio | `DomainException` | **400** |
+| Recurso inexistente | `NotFoundException` | **404** *(próximamente)* |
+| CategoryId inexistente (FK BD) | Excepción de EF Core | **500** |
+
+---
+
+## 11. Qué se gana con estos cambios
+* **Semántica REST:** creaciones como 201, reglas rotas como 400 y no encontrados como 404.
+* **Intención explícita:** `DomainException` significa siempre "regla de negocio rota".
+* **Mapeo seguro:** el manejador global ya no depende de tipos genéricos.
+* **ProblemDetails consistente:** las excepciones usan el formato estándar.
+
+---
+
+## 12. Decisiones de diseño y limitaciones conocidas
+
 | Tema | Estado actual | Mejora sugerida |
 | --- | --- | --- |
-| Excepciones nativas a 400 | Atrapa genéricas como `ArgumentException` | Crear excepciones propias de dominio (ej. `DomainException`) |
-| Stock insuficiente | Responde 400 | `409 Conflict` suele describir mejor un conflicto |
-| Id inexistente | Sigue siendo 500 (FK de BD) | Verificar existencia en el handler y responder `404` |
+| Ramas antiguas | El manejador ya no atrapa genéricas como negocio | Correcto |
+| `NotFoundException` en Domain | Vive en la capa de dominio | Discutible; algunos prefieren Application |
+| 404 sin uso real | Está implementado pero ningún endpoint lo lanza | Implementar consultas por Id |
+| 201 sin Location | Falta el encabezado con URL | `CreatedAtAction` cuando exista GET por Id |
+| Llave foránea | 500 | Lanzar 404 al verificar |
 
 ---
 
-## 14. Glosario
+## 13. Glosario
 | Término | Definición |
 | --- | --- |
-| **IExceptionHandler** | Interfaz de .NET 8 para manejar excepciones de forma centralizada |
-| **ProblemDetails** | Formato estándar JSON para describir errores en APIs HTTP |
-| **FluentValidation** | Librería para declarar reglas de validación encadenadas |
-| **Pipeline Behavior** | Componente de MediatR que se ejecuta antes/después de un handler |
+| **Excepción de dominio** | Excepción propia que representa regla de negocio rota |
+| **REST** | Estilo de API usando verbos y códigos HTTP estándar |
+| **201 Created** | Código que indica que se creó un recurso nuevo |
+| **404 Not Found** | Código que indica recurso inexistente |
+| **Falso positivo** | Tratar como error de negocio algo que es error del sistema |
 
 ---
 
-## 15. Próximos pasos
-* Excepciones de dominio propias para mapear códigos HTTP con precisión (400, 404, 409).
-* Verificar la existencia de `CategoryId` y `BrandId` y responder `404`.
-* Pruebas unitarias de validadores y del `ValidationBehavior`.
-* `201 Created` en las operaciones de creación.
-* Paginación y filtros en las consultas de listado.
+## 14. Próximos pasos
+* Consultas por Id (`GetProductByIdQuery`) que lancen `NotFoundException` (404).
+* `CreatedAtAction` con el encabezado `Location` en las creaciones.
+* Verificar `CategoryId` antes de guardar y responder 404 en lugar de 500.
+* Subtipos de `DomainException` (ej. `InsufficientStockException` -> 409).
