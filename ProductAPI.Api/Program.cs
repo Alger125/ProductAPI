@@ -1,31 +1,42 @@
-// --- NUEVOS USINGS ---
 using Microsoft.EntityFrameworkCore;
-using ProductAPI.Infrastructure.Persistence; 
-// ---------------------
+using ProductAPI.Application.Repositories;
+using ProductAPI.Infrastructure.Persistence;
+using ProductAPI.Infrastructure.Persistence.Repositories;
+using ProductAPI.Application.Features.Products.Commands.CreateProduct;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ============================================================
 // 1. CONFIGURACIÓN DE BASE DE DATOS (Entity Framework Core)
 // ============================================================
-// Leemos la cadena de conexión llamada "DefaultConnection" desde appsettings.json
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-
-// Registramos el ApplicationDbContext en el contenedor de inyección de dependencias
-// y le decimos que utilice SQL Server con esa cadena de conexión.
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(connectionString));
+
 // ============================================================
+// 2. INYECCIÓN DE DEPENDENCIAS (MediatR y Repositorios)
+// ============================================================
+// Registramos el Repositorio de la capa Infrastructure
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IBrandRepository, BrandRepository>();
+builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 
+// Registramos MediatR escaneando el assembly de la capa Application
+builder.Services.AddMediatR(cfg => 
+    cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly));
 
-// Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+// Agregamos soporte para Controladores
+builder.Services.AddControllers();
+
+// ============================================================
+// 3. SWAGGER Y CONFIGURACIÓN BÁSICA
+// ============================================================
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger(options =>
@@ -37,29 +48,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast")
-.WithOpenApi();
+// Mapeamos los controladores (nuestro ProductsController)
+app.MapControllers();
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}

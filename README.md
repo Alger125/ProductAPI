@@ -1,276 +1,350 @@
-# ProductAPI
+# ProductAPI – Rama feature/product-usecases
 
-API de gestión de productos desarrollada con .NET 8 siguiendo los principios de Clean Architecture y un dominio rico (Rich Domain Model) con reglas de negocio encapsuladas.
+Implementación de la capa de Aplicación (casos de uso con CQRS y MediatR) y de la capa API (controladores HTTP) sobre el dominio y la persistencia ya existentes.
 
 ## Tabla de contenidos
-1. [Estado actual del proyecto](#1-estado-actual-del-proyecto)
-2. [Arquitectura](#2-arquitectura)
-3. [Estructura de la solución](#3-estructura-de-la-solución)
-4. [Cómo se construyó la solución paso a paso](#4-cómo-se-construyó-la-solución-paso-a-paso)
-5. [Capa de Dominio en detalle](#5-capa-de-dominio-en-detalle)
-6. [Capa API: arranque y Swagger](#6-capa-api-arranque-y-swagger)
-7. [Pruebas unitarias](#7-pruebas-unitarias)
-8. [Cómo ejecutar el proyecto](#8-cómo-ejecutar-el-proyecto)
-9. [Flujo de ramas e historial](#9-flujo-de-ramas-e-historial)
-10. [Próximos pasos](#10-próximos-pasos)
+1. [Objetivo de la rama](#1-objetivo-de-la-rama)
+2. [Punto de partida y alcance](#2-punto-de-partida-y-alcance)
+3. [Visión general del flujo de una petición](#3-visión-general-del-flujo-de-una-petición)
+4. [Desarrollo paso a paso](#4-desarrollo-paso-a-paso)
+5. [CQRS y MediatR en detalle](#5-cqrs-y-mediatr-en-detalle)
+6. [Patrón Repositorio: interfaz e implementación](#6-patrón-repositorio-interfaz-e-implementación)
+7. [DTOs y mapeo manual con LINQ](#7-dtos-y-mapeo-manual-con-linq)
+8. [Controladores delgados](#8-controladores-delgados)
+9. [Inyección de dependencias](#9-inyección-de-dependencias)
+10. [Cómo probar la API](#10-cómo-probar-la-api)
+11. [Manejo de errores: comportamiento actual](#11-manejo-de-errores-comportamiento-actual)
+12. [Decisiones de diseño y limitaciones conocidas](#12-decisiones-de-diseño-y-limitaciones-conocidas)
+13. [Glosario](#13-glosario)
+14. [Próximos pasos](#14-próximos-pasos)
 
 ---
 
-## 1. Estado actual del proyecto
+## 1. Objetivo de la rama
+Hasta esta rama el proyecto tenía:
+* Un dominio con reglas de negocio (Domain) → ver `feature/product-domain`.
+* Una persistencia con EF Core y SQL Server en Docker (Infrastructure) → ver `feature/ef-core-sqlserver`.
 
-| Componente | Estado |
+Pero ninguna de las dos capas era accesible desde fuera. Esta rama las conecta:
+* Crea los casos de uso en `Application`, separando comandos (escritura) y consultas (lectura) con CQRS.
+* Define interfaces de repositorio en `Application` y sus implementaciones en `Infrastructure`.
+* Introduce DTOs para no exponer las entidades del dominio.
+* Expone todo mediante controladores HTTP en `Api`.
+* Cablea las dependencias en `Program.cs`.
+
+El flujo completo (Repositorio → Command/Query → DTO → Controller) se aplicó a las 4 entidades: `Products`, `Brands`, `Categories` y `Reviews`.
+
+---
+
+## 2. Punto de partida y alcance
+
+| Incluye | No incluye |
 | --- | --- |
-| Solución con 4 capas (Api, Application, Domain, Infrastructure) | Hecho |
-| Entidades Product, Category, Brand, Review | Hecho |
-| Reglas de negocio y encapsulación en Product | Hecho |
-| Pruebas unitarias del dominio | Hecho |
-| Swagger UI | Hecho |
-| Persistencia con EF Core + SQL Server en Docker | Ver rama `feature/ef-core-sqlserver` |
-| Casos de uso, endpoints de negocio, validaciones, CQRS | Pendiente |
+| Comandos y consultas con MediatR | Validación de entrada (FluentValidation) |
+| Interfaces `I*Repository` en Application | Manejo global de excepciones |
+| Implementaciones `*Repository` en Infrastructure | Autenticación y autorización |
+| DTOs y mapeo manual con LINQ | Paginación y filtros |
+| Controladores para las 4 entidades | Pruebas de los casos de uso |
+| Registro de dependencias en `Program.cs` | |
 
-*`main` representa el cascarón de la arquitectura y las reglas puras de dominio. Todavía no se usan librerías externas de CQRS ni de validación (sin MediatR ni FluentValidation).*
-
----
-
-## 2. Arquitectura
-
-**Regla de dependencias**
-Las dependencias siempre apuntan hacia el dominio. El dominio no conoce a nadie.
-
+**Dependencias entre capas**
 ```text
-┌────────────────────────────────────────────────┐
-│ ProductAPI.Api (presentación / host)           │
-│       │                                │       │
-│       ▼                                ▼       │
-│  Application ◄── Infrastructure                │
-│       │                                        │
-│       ▼                                        │
-│  Domain (entidades y reglas de negocio)        │
-└────────────────────────────────────────────────┘
+Api ──────────► Application ──────────► Domain
+ │                   ▲
+ └──► Infrastructure ┘
 ```
 
-**Referencias entre proyectos (verificadas en los .csproj)**
-
-| Proyecto | Referencia a | Paquetes NuGet |
+| Capa | Contiene en esta rama | Depende de |
 | --- | --- | --- |
-| `ProductAPI.Domain` | Ninguna | Ninguno |
-| `ProductAPI.Application` | `Domain` | Ninguno |
-| `ProductAPI.Infrastructure` | `Application` (y por transitividad `Domain`) | Ninguno en main |
-| `ProductAPI.Api` | `Application`, `Infrastructure` | `Microsoft.AspNetCore.OpenApi 8.0.31`, `Swashbuckle.AspNetCore 6.6.2` |
-| `ProductAPI.Domain.Tests` | `Domain` | Framework de pruebas |
+| **Domain** | Entidades (sin cambios) | Nada |
+| **Application** | Commands, Queries, Handlers, DTOs, interfaces de repositorio | Domain, MediatR |
+| **Infrastructure** | Implementaciones de repositorio con EF Core | Application (y EF Core) |
+| **Api** | Controladores y `Program.cs` | Application, Infrastructure |
 
-*Por qué `Api` referencia a `Infrastructure`: el host necesita registrar las implementaciones concretas (repositorios, DbContext) en el contenedor de inyección de dependencias. Fuera de ese registro, la capa Api debe depender solo de abstracciones de Application.*
-
----
-
-## 3. Estructura de la solución
-
-```text
-ProductAPI/
-├── ProductAPI.sln
-├── README.md
-├── ProductAPI.Api/
-│   ├── appsettings.json
-│   ├── appsettings.Development.json
-│   ├── Program.cs
-│   └── ProductAPI.Api.csproj
-├── ProductAPI.Application/
-│   └── ProductAPI.Application.csproj
-├── ProductAPI.Domain/
-│   ├── ProductAPI.Domain.csproj
-│   └── Entities/
-│       ├── Brand.cs
-│       ├── Category.cs
-│       ├── Product.cs
-│       └── Review.cs
-├── ProductAPI.Domain.Tests/
-│   ├── ProductAPI.Domain.Tests.csproj
-│   └── ProductTests.cs
-└── ProductAPI.Infrastructure/
-    └── ProductAPI.Infrastructure.csproj
-```
+**Regla de oro:** el centro (Application) nunca depende de la periferia (Infrastructure). Los handlers solo conocen la interfaz `IProductRepository`, nunca `ApplicationDbContext`.
 
 ---
 
-## 4. Cómo se construyó la solución paso a paso
-La solución se creó con la CLI de .NET. La secuencia equivalente es la siguiente.
+## 3. Visión general del flujo de una petición
 
-### 4.1 Crear la solución y los proyectos
-```bash
-mkdir ProductAPI && cd ProductAPI
-dotnet new sln -n ProductAPI
-dotnet new webapi -n ProductAPI.Api -f net8.0
-dotnet new classlib -n ProductAPI.Application -f net8.0
-dotnet new classlib -n ProductAPI.Domain -f net8.0
-dotnet new classlib -n ProductAPI.Infrastructure -f net8.0
+```mermaid
+sequenceDiagram
+    participant C as Cliente (Swagger/Front)
+    participant API as ProductsController
+    participant M as MediatR
+    participant H as CreateProductCommandHandler
+    participant R as IProductRepository
+    participant DB as SQL Server
+
+    C->>API: POST /api/products (JSON)
+    API->>M: Send(CreateProductCommand)
+    M->>H: Handle(command)
+    H->>H: new Product(...) (reglas del dominio)
+    H->>R: AddAsync(product)
+    R->>DB: INSERT (EF Core)
+    DB-->>R: OK
+    H-->>M: Id del producto
+    M-->>API: Id del producto
+    API-->>C: 200 OK { Message, ProductId }
 ```
 
-### 4.2 Agregar los proyectos a la solución
-```bash
-dotnet sln add ProductAPI.Api/ProductAPI.Api.csproj
-dotnet sln add ProductAPI.Application/ProductAPI.Application.csproj
-dotnet sln add ProductAPI.Domain/ProductAPI.Domain.csproj
-dotnet sln add ProductAPI.Infrastructure/ProductAPI.Infrastructure.csproj
-```
-
-### 4.3 Configurar las referencias entre capas
-```bash
-dotnet add ProductAPI.Application reference ProductAPI.Domain
-dotnet add ProductAPI.Infrastructure reference ProductAPI.Application
-dotnet add ProductAPI.Api reference ProductAPI.Application
-dotnet add ProductAPI.Api reference ProductAPI.Infrastructure
-```
-Cada comando agrega un `<ProjectReference>` al `.csproj` del primer proyecto. Si se intenta crear una referencia circular, el compilador la rechaza, lo que ayuda a proteger la regla de dependencias.
-
-### 4.4 Paquetes de la capa Api
-```bash
-dotnet add ProductAPI.Api package Swashbuckle.AspNetCore --version 6.6.2
-dotnet add ProductAPI.Api package Microsoft.AspNetCore.OpenApi --version 8.0.31
-```
-
-### 4.5 Proyecto de pruebas del dominio
-```bash
-dotnet new xunit -n ProductAPI.Domain.Tests -f net8.0
-dotnet sln add ProductAPI.Domain.Tests/ProductAPI.Domain.Tests.csproj
-dotnet add ProductAPI.Domain.Tests reference ProductAPI.Domain
-```
-
-### 4.6 Verificar la compilación
-```bash
-dotnet build
-dotnet test
-```
-
----
-
-## 5. Capa de Dominio en detalle
-
-### 5.1 Entidades
-| Entidad | Rol |
-| --- | --- |
-| `Product` | Agregado principal. Contiene precio, stock y las reglas de negocio |
-| `Category` | Clasificación del producto (relación 1:N con Product) |
-| `Brand` | Marca del producto (relación 1:N con Product) |
-| `Review` | Reseña asociada a un producto (relación 1:N con Product) |
-
-*Relaciones de Product: guarda CategoryId y BrandId como claves foráneas, con las propiedades de navegación Category y Brand, y una colección Reviews.*
-
-### 5.2 Encapsulación en Product
-Todas las propiedades tienen `private set`: el estado solo puede cambiar mediante métodos que validan las reglas de negocio. Esto evita que código externo deje la entidad en un estado inválido.
-
-```csharp
-public class Product
-{
-    public Guid Id { get; private set; }
-    public string Name { get; private set; } = string.Empty;
-    public string Description { get; private set; } = string.Empty;
-    public decimal Price { get; private set; }
-    public int Stock { get; private set; }
-
-    public Guid CategoryId { get; private set; }
-    public Guid BrandId { get; private set; }
-
-    public Category? Category { get; private set; }
-    public Brand? Brand { get; private set; }
-    public ICollection<Review> Reviews { get; private set; } = new List<Review>();
-
-    protected Product() { } // constructor para EF Core
-
-    public Product(Guid id, string name, decimal price, int stock, Guid categoryId, Guid brandId)
-    {
-        Id = id;
-        Name = name;
-        CategoryId = categoryId;
-        BrandId = brandId;
-
-        UpdatePrice(price); // reutiliza la validación
-        AddStock(stock);
-    }
-    // ...
-}
-```
-**Decisiones de diseño:**
-* Constructor `protected` sin parámetros: EF Core lo necesita para materializar entidades, y al no ser público impide crear productos sin pasar por las reglas.
-* El constructor público delega en `UpdatePrice` y `AddStock`: así las reglas de validación existen en un único lugar y no se duplican.
-
-### 5.3 Reglas de negocio
-| Método | Regla | Excepción |
+Cada capa tiene una única responsabilidad:
+| Paso | Capa | Responsabilidad |
 | --- | --- | --- |
-| `UpdatePrice(decimal)` | El precio no puede ser negativo | ArgumentException |
-| `AddStock(int)` | La cantidad a agregar no puede ser negativa | ArgumentException |
-| `RemoveStock(int)` | La cantidad debe ser mayor a cero | ArgumentException |
-| `RemoveStock(int)` | No se puede retirar más stock del disponible | InvalidOperationException |
-
-Criterio de excepciones: `ArgumentException` indica un argumento inválido por sí mismo (negativo). `InvalidOperationException` indica que la operación no es válida dado el estado actual del objeto (stock insuficiente).
+| Recibir HTTP y responder HTTP | **Api** | Nada más |
+| Enrutar el mensaje al manejador correcto | **MediatR** | Desacoplar controlador y caso de uso |
+| Orquestar el caso de uso | **Application** (Handler) | Crear/consultar entidades y llamar al repositorio |
+| Reglas de negocio | **Domain** (Entidad) | Validar precio, stock, etc. |
+| Persistir | **Infrastructure** (Repositorio) | Traducir a consultas SQL con EF Core |
 
 ---
 
-## 6. Capa API: arranque y Swagger
+## 4. Desarrollo paso a paso
 
-`Program.cs` en `main` es un host mínimo con Swagger:
-
-```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-var app = builder.Build();
-
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-
-app.UseHttpsRedirection();
-
-// Endpoint de ejemplo de la plantilla (se eliminará al crear los endpoints reales)
-app.MapGet("/weatherforecast", () => { /* ... */ })
-   .WithName("GetWeatherForecast")
-   .WithOpenApi();
-
-app.Run();
+### 4.1 Crear la rama
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/product-usecases
 ```
 
-*Problema conocido con Swashbuckle 6.6.2: Swagger UI puede mostrar el error "La definición proporcionada no especifica un campo de versión válido" porque el documento se genera como openapi: 3.0.4. La solución aplicada en la rama `feature/ef-core-sqlserver` está documentada en su README.*
-
----
-
-## 7. Pruebas unitarias
-`ProductAPI.Domain.Tests/ProductTests.cs` verifica las reglas de negocio de `Product` sin depender de base de datos ni de la API. Las pruebas cubren los casos de las reglas de la sección 5.3 (precio negativo, stock negativo, retiro inválido y stock insuficiente).
-
+### 4.2 Instalar MediatR en la capa Application
 ```bash
-dotnet test
+dotnet add ProductAPI.Application package MediatR
 ```
 
----
+### 4.3 Definir las interfaces de repositorio (Application)
+Se crea una interfaz por entidad (`IProductRepository`, `IBrandRepository`, `ICategoryRepository`, `IReviewRepository`). Cada una declara únicamente las operaciones que los casos de uso necesitan, por ejemplo `AddAsync` y `GetAllAsync`.
 
-## 8. Cómo ejecutar el proyecto
+### 4.4 Crear Commands, Queries y Handlers (Application)
+Para cada operación se crean dos archivos:
+| Archivo | Rol | Ejemplo |
+| --- | --- | --- |
+| `*Command.cs` / `*Query.cs` | El mensaje: un record que solo transporta datos | `CreateProductCommand` |
+| `*Handler.cs` | La lógica del caso de uso | `CreateProductCommandHandler` |
+
+### 4.5 Crear los DTOs (Application)
+Un record por entidad con solo las propiedades que se quieren exponer (por ejemplo `ProductDto`).
+
+### 4.6 Implementar los repositorios (Infrastructure)
+Se crea `ProductRepository : IProductRepository` (y los equivalentes) usando `ApplicationDbContext`.
+
+### 4.7 Crear los controladores (Api)
+Un controlador por entidad: `ProductsController`, etc., que reciben el `IMediator` por constructor.
+
+### 4.8 Registrar dependencias en Program.cs
+Ver sección 9.
+
+### 4.9 Compilar y probar
 ```bash
-git clone https://github.com/Alger125/ProductAPI.git
-cd ProductAPI
-dotnet restore
 dotnet build
 dotnet run --project ProductAPI.Api
 ```
-Abrir `https://localhost:<puerto>/swagger`. El puerto exacto se muestra en la consola al iniciar y se define en `Properties/launchSettings.json`.
+
+### 4.10 Commits y Pull Request
+```bash
+git add .
+git commit -m "feat: add use cases, repositories and controllers with CQRS"
+git push -u origin feature/product-usecases
+```
 
 ---
 
-## 9. Flujo de ramas e historial
-Se trabaja con ramas de funcionalidad (`feature/*`) que se integran en `main` mediante Pull Requests. La convención de mensajes sigue Conventional Commits (`feat`, `build`, `docs`, `chore`).
+## 5. CQRS y MediatR en detalle
 
-| Rama | Documentación |
+### 5.1 ¿Qué es CQRS?
+*Command and Query Responsibility Segregation*: separar las operaciones que modifican el sistema de las que solo leen.
+
+| Tipo | Propósito | ¿Modifica datos? | Ejemplos |
+| --- | --- | --- | --- |
+| **Command** | Ordenar un cambio | Sí | Crear, actualizar, borrar |
+| **Query** | Hacer una pregunta | Nunca | Obtener todos, obtener por Id |
+
+**Beneficios:** cada caso de uso es una clase pequeña con una sola responsabilidad, es fácil de probar de forma aislada y se puede optimizar la lectura sin tocar la escritura.
+
+### 5.2 ¿Qué es MediatR?
+Librería que implementa el patrón Mediator. Funciona como un cartero: el controlador entrega un mensaje (`Command` o `Query`) y MediatR lo envía al handler que lo sabe procesar. El controlador no conoce al handler.
+
+### 5.3 Anatomía de un caso de uso
+1) El mensaje (record que solo transporta datos):
+```csharp
+public record CreateProductCommand(/* datos necesarios */) : IRequest<Guid>;
+```
+
+2) El manejador:
+```csharp
+public class CreateProductCommandHandler : IRequestHandler<CreateProductCommand, Guid>
+{
+    private readonly IProductRepository _repository;
+    public CreateProductCommandHandler(IProductRepository repository) => _repository = repository;
+
+    public async Task<Guid> Handle(CreateProductCommand request, CancellationToken cancellationToken)
+    {
+        // 1. Construir la entidad usando el constructor del dominio
+        // 2. Persistir mediante el repositorio
+        // 3. Devolver el Id
+    }
+}
+```
+
+### 5.4 Convenciones de nombres
+| Elemento | Convención | Ejemplo |
+| --- | --- | --- |
+| Comando | `Verbo` + `Entidad` + `Command` | `CreateProductCommand` |
+| Consulta | `Verbo` + `Entidad(es)` + `Query` | `GetProductsQuery` |
+| Handler | `Nombre del mensaje` + `Handler` | `GetProductsQueryHandler` |
+
+---
+
+## 6. Patrón Repositorio: interfaz e implementación
+
+### 6.1 El problema
+Si los handlers usaran `ApplicationDbContext` directamente, la lógica de negocio quedaría acoplada a EF Core y a SQL Server, y no se podría probar sin una base de datos.
+
+### 6.2 La solución
+| Dónde | Qué | Responsabilidad |
+| --- | --- | --- |
+| **Application** | `IProductRepository` (interfaz) | Declara qué operaciones se necesitan, sin saber cómo |
+| **Infrastructure**| `ProductRepository` (clase) | Implementa la interfaz con EF Core y consultas reales |
+
+### 6.3 Inversión de dependencias
+Infrastructure referencia a Application (no al revés). La interfaz vive en la capa interna y la implementación en la externa: ese es el principio de inversión de dependencias (la D de SOLID).
+
+---
+
+## 7. DTOs y mapeo manual con LINQ
+
+### 7.1 Por qué no devolver la entidad
+Las entidades del dominio no deben salir por la API porque:
+* Su estructura puede cambiar por razones internas sin que el contrato de la API deba cambiar.
+* Pueden contener propiedades de navegación que provocan ciclos de serialización o exponen datos no deseados.
+* Acoplan a los clientes con el modelo de dominio.
+
+En su lugar se devuelve un **DTO (Data Transfer Object)**: un record con solo lo que se quiere mostrar.
+
+### 7.2 Mapeo con Select
+En `GetProductsQueryHandler`, las entidades se transforman a DTOs con el operador `Select` de LINQ:
+```csharp
+var productDtos = products.Select(p => new ProductDto(
+    p.Id, p.Name, p.Description, p.Price, p.Stock, p.CategoryId, p.BrandId
+));
+```
+
+### 7.3 Mapeo manual vs. AutoMapper
+| | Manual (LINQ) | AutoMapper |
+| --- | --- | --- |
+| **Control** | Total y explícito | Basado en convenciones y configuración |
+| **Rendimiento**| Sin reflexión en tiempo de ejecución | Ligeramente menor |
+| **Errores** | Se detectan al compilar | Algunos se detectan solo al ejecutar |
+| **Recomendado**| Proyectos pequeños o medianos | Modelos con muchas propiedades |
+
+*Se eligió el mapeo manual por transparencia y control.*
+
+---
+
+## 8. Controladores delgados
+La capa API queda mínima: cada acción tiene pocas líneas.
+
+```csharp
+[HttpPost]
+public async Task<IActionResult> CreateProduct([FromBody] CreateProductCommand command)
+{
+    var productId = await _mediator.Send(command); // 1. Delegar a MediatR
+    return Ok(new { Message = "Producto creado", ProductId = productId }); // 2. Responder 200 OK
+}
+```
+
+| El controlador hace | El controlador no hace |
 | --- | --- |
-| `feature/product-domain` | Entidades y reglas de negocio |
-| `feature/ef-core-sqlserver` | Docker, SQL Server y migraciones de EF Core |
+| Recibir y deserializar HTTP | Validar reglas de negocio |
+| Enviar el mensaje por MediatR | Acceder a la base de datos |
+| Traducir el resultado a HTTP | Conocer SQL o EF Core |
 
 ---
 
-## 10. Próximos pasos
-* Definir interfaces de repositorio y casos de uso en `Application`.
-* Implementar el `DbContext` y los repositorios en `Infrastructure`.
-* Reemplazar el endpoint de ejemplo `/weatherforecast` por los endpoints de productos.
-* Agregar validación de entrada (por ejemplo con FluentValidation) y manejo global de errores.
-* Evaluar CQRS en caso de que la complejidad de los casos de uso lo justifyque.
+## 9. Inyección de dependencias
+Para conectar interfaces, implementaciones y handlers al arrancar, se configura `Program.cs`:
+
+```csharp
+// Cuando alguien pida un IProductRepository, entregar un ProductRepository
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+
+// Registrar MediatR y descubrir todos los handlers del ensamblado
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly));
+```
+
+**Por qué AddScoped:**
+Un repositorio que usa el DbContext debe tener el mismo ciclo de vida o menor; Scoped (una instancia por petición HTTP) es la opción estándar porque coincide con el ciclo de vida del DbContext.
+
+---
+
+## 10. Cómo probar la API
+
+### 10.1 Requisitos
+* SQL Server en Docker corriendo (`docker ps`).
+* Migraciones aplicadas.
+
+### 10.2 Ejecutar
+```bash
+dotnet run --project ProductAPI.Api
+```
+Abrir `http://localhost:<puerto>/swagger`.
+
+### 10.3 Orden obligatorio de creación
+Las bases de datos relacionales exigen integridad referencial. Un `Product` necesita un `CategoryId` y un `BrandId` que existan.
+
+| Paso | Endpoint | Acción |
+| --- | --- | --- |
+| 1 | `Categories` → POST | Crear una categoría y copiar el Id devuelto |
+| 2 | `Brands` → POST | Crear una marca y copiar el Id devuelto |
+| 3 | `Products` → POST | Crear el producto con esos dos Ids |
+| 4 | `Products` → GET | Verificar que aparece en el listado |
+
+### 10.4 Casos de prueba recomendados
+| Caso | Entrada | Resultado actual |
+| --- | --- | --- |
+| Flujo feliz | Ids válidos de categoría y marca | 200 OK con el Id del producto |
+| Id inexistente | Guid aleatorio | 500 por violación de llave foránea |
+| Precio negativo| Price: -10 | 500 (la excepción del dominio no se traduce) |
+| Stock negativo | Stock: -1 | 500 (ídem) |
+
+---
+
+## 11. Manejo de errores: comportamiento actual
+Todavía no hay validación de entrada ni un manejador global de excepciones. Por eso, tanto los errores de base de datos como las excepciones de negocio (`ArgumentException`, `InvalidOperationException`) devuelven un genérico **500 Internal Server Error**.
+
+Las reglas de negocio sí se cumplen (el dato inválido nunca se guarda), pero el cliente recibe un error genérico en lugar de un mensaje útil (como un 400 Bad Request). Esto se resolverá en los próximos pasos.
+
+---
+
+## 12. Decisiones de diseño y limitaciones conocidas
+
+| Tema | Estado actual | Mejora sugerida |
+| --- | --- | --- |
+| Código al crear | `200 OK` | `201 Created` con encabezado Location |
+| Errores de negocio | `500` | Middleware global que mapee a 400, 404 o 409 con `ProblemDetails` |
+| Validación | No existe | `FluentValidation` con un pipeline behavior de MediatR |
+| Existencia de IDs | Se detecta en la BD | Verificar en el handler y devolver 404 |
+| GetAll sin límite | Devuelve todos | Paginación (page, pageSize) |
+| Pruebas | No hay para handlers | Probar handlers con repositorios simulados (mocks) |
+
+---
+
+## 13. Glosario
+| Término | Definición |
+| --- | --- |
+| **CQRS** | Separar operaciones de escritura (Commands) y lectura (Queries) |
+| **Mediator** | Patrón que desacopla al emisor de un mensaje de quien lo procesa |
+| **Repositorio** | Abstracción que oculta cómo se persisten y recuperan las entidades |
+| **DTO** | Objeto que transporta solo los datos que se desean exponer |
+| **Inversión de dependencias** | Las capas internas definen interfaces; las externas las implementan |
+
+---
+
+## 14. Próximos pasos
+* Manejo global de excepciones que convierta errores de dominio en respuestas 400, 404 y 409.
+* Validación de entrada con FluentValidation integrada a MediatR.
+* `201 Created` en las operaciones de creación.
+* Casos de uso de actualización y eliminación.
+* Pruebas unitarias de los handlers.
+* Paginación en las consultas de listado.
