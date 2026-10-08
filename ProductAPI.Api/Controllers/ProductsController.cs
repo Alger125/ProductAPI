@@ -18,21 +18,40 @@ public class ProductsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateProduct([FromBody] CreateProductCommand command)
     {
-        // El controlador NO tiene lógica de negocio. Simplemente le pasa el JSON
-        // (convertido a comando) a MediatR para que la capa Application lo procese.
         var productId = await _mediator.Send(command);
-
-        return Ok(new { Message = "Producto creado con éxito", ProductId = productId });
+        return CreatedAtAction(nameof(GetProductById), new { id = productId }, new { Message = "Producto creado con éxito", ProductId = productId });
     }
 
     [HttpGet]
     public async Task<IActionResult> GetProducts()
     {
-        // Usamos la nueva Query que acabamos de crear
         var query = new ProductAPI.Application.Features.Products.Queries.GetProducts.GetProductsQuery();
         var products = await _mediator.Send(query);
-
         return Ok(products);
+    }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetProductById(Guid id)
+    {
+        var query = new ProductAPI.Application.Features.Products.Queries.GetProductById.GetProductByIdQuery(id);
+        var product = await _mediator.Send(query);
+        return Ok(product);
+    }
+
+    [HttpPut("{id}")]
+    public async Task<IActionResult> UpdateProduct(Guid id, [FromBody] ProductAPI.Application.Features.Products.Commands.UpdateProduct.UpdateProductCommand command)
+    {
+        if (id != command.Id) return BadRequest("El ID de la ruta no coincide con el del cuerpo.");
+        await _mediator.Send(command);
+        return NoContent();
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteProduct(Guid id)
+    {
+        var command = new ProductAPI.Application.Features.Products.Commands.DeleteProduct.DeleteProductCommand(id);
+        await _mediator.Send(command);
+        return NoContent();
     }
 }
 
