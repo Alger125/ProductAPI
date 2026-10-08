@@ -3,6 +3,8 @@ using ProductAPI.Application.Repositories;
 using ProductAPI.Infrastructure.Persistence;
 using ProductAPI.Infrastructure.Persistence.Repositories;
 using ProductAPI.Application.Features.Products.Commands.CreateProduct;
+using FluentValidation;
+using MediatR;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,11 +25,20 @@ builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<IReviewRepository, ReviewRepository>();
 
 // Registramos MediatR escaneando el assembly de la capa Application
-builder.Services.AddMediatR(cfg => 
-    cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly));
+builder.Services.AddMediatR(cfg => {
+    cfg.RegisterServicesFromAssembly(typeof(CreateProductCommand).Assembly);
+    cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ProductAPI.Application.Behaviors.ValidationBehavior<,>));
+});
+
+// Registramos todos los validadores de FluentValidation
+builder.Services.AddValidatorsFromAssembly(typeof(CreateProductCommand).Assembly);
 
 // Agregamos soporte para Controladores
 builder.Services.AddControllers();
+
+// Agregamos el manejador de excepciones global
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ProductAPI.Api.Middlewares.GlobalExceptionHandler>();
 
 // ============================================================
 // 3. SWAGGER Y CONFIGURACIÓN BÁSICA
@@ -36,6 +47,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+// Habilitar el manejador de excepciones global
+app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
 {
