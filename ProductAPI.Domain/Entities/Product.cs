@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using ProductAPI.Domain.Exceptions;
 
 namespace ProductAPI.Domain.Entities;
 
@@ -41,7 +42,7 @@ public class Product
     public void UpdatePrice(decimal newPrice)
     {
         if (newPrice < 0)
-            throw new ArgumentException("El precio no puede ser negativo.");
+            throw new DomainException("El precio no puede ser negativo.");
         
         Price = newPrice;
     }
@@ -49,7 +50,7 @@ public class Product
     public void AddStock(int quantity)
     {
         if (quantity < 0)
-            throw new ArgumentException("La cantidad a agregar no puede ser negativa.");
+            throw new DomainException("La cantidad a agregar no puede ser negativa.");
         
         Stock += quantity;
     }
@@ -57,10 +58,10 @@ public class Product
     public void RemoveStock(int quantity)
     {
         if (quantity <= 0)
-            throw new ArgumentException("La cantidad a retirar debe ser mayor a cero.");
+            throw new DomainException("La cantidad a retirar debe ser mayor a cero.");
             
         if (Stock < quantity)
-            throw new InvalidOperationException("No hay suficiente inventario para realizar esta operación.");
+            throw new DomainException("No hay suficiente inventario para realizar esta operación.");
             
         Stock -= quantity;
     }

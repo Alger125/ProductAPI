@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using ProductAPI.Domain.Exceptions;
 
 namespace ProductAPI.Api.Middlewares;
 
@@ -27,13 +28,20 @@ public class GlobalExceptionHandler : IExceptionHandler
             Detail = "Ocurrió un error inesperado al procesar la solicitud."
         };
 
-        // Si la excepción es una regla de negocio del Dominio (ArgumentException o InvalidOperationException)
-        // la convertimos en un Error 400 (Bad Request)
-        if (exception is ArgumentException || exception is InvalidOperationException)
+        // Reglas de negocio rotas -> 400 Bad Request o 409 Conflict
+        if (exception is DomainException domainException)
         {
             problemDetails.Status = StatusCodes.Status400BadRequest;
-            problemDetails.Title = "Error de validación o regla de negocio";
-            problemDetails.Detail = exception.Message;
+            problemDetails.Title = "Error de regla de negocio";
+            problemDetails.Detail = domainException.Message;
+        }
+
+        // Recurso no encontrado -> 404 Not Found
+        if (exception is NotFoundException notFoundException)
+        {
+            problemDetails.Status = StatusCodes.Status404NotFound;
+            problemDetails.Title = "Recurso no encontrado";
+            problemDetails.Detail = notFoundException.Message;
         }
 
         // Si la excepción viene de FluentValidation
