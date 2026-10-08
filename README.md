@@ -1,57 +1,84 @@
-# ProductAPI – Rama feature/domain-exceptions
+# ProductAPI – Rama feature/product-full-crud
 
-Excepciones propias del dominio (`DomainException`, `NotFoundException`), su traducción a códigos HTTP en el manejador global de errores y respuestas 201 Created en los controladores, para alinear la API con los estándares REST.
+Ciclo de vida completo (CRUD) para la entidad Product: consulta por Id, actualización y eliminación, sobre Clean Architecture y CQRS con MediatR, más el encabezado Location en la creación mediante CreatedAtAction.
 
 ## Tabla de contenidos
 1. [Objetivo de la rama](#1-objetivo-de-la-rama)
-2. [Punto de partida y problema a resolver](#2-punto-de-partida-y-problema-a-resolver)
+2. [Punto de partida y alcance](#2-punto-de-partida-y-alcance)
 3. [Resumen de cambios](#3-resumen-de-cambios)
 4. [Desarrollo paso a paso](#4-desarrollo-paso-a-paso)
-5. [Excepciones personalizadas del dominio](#5-excepciones-personalizadas-del-dominio)
-6. [Refactorización de la entidad Product](#6-refactorización-de-la-entidad-product)
-7. [Cambios en GlobalExceptionHandler](#7-cambios-en-globalexceptionhandler)
-8. [Respuestas 201 Created en los controladores](#8-respuestas-201-created-en-los-controladores)
-9. [Pruebas](#9-pruebas)
+5. [Casos de uso (Application)](#5-casos-de-uso-application)
+6. [Controlador (Api)](#6-controlador-api)
+7. [CreatedAtAction y el encabezado Location](#7-createdataction-y-el-encabezado-location)
+8. [Referencia de endpoints](#8-referencia-de-endpoints)
+9. [Cómo probarlo paso a paso](#9-cómo-probarlo-paso-a-paso)
 10. [Mapa de respuestas HTTP](#10-mapa-de-respuestas-http)
-11. [Qué se gana con estos cambios](#11-qué-se-gana-con-estos-cambios)
-12. [Decisiones de diseño y limitaciones conocidas](#12-decisiones-de-diseño-y-limitaciones-conocidas)
-13. [Glosario](#13-glosario)
-14. [Próximos pasos](#14-próximos-pasos)
+11. [Decisiones de diseño y limitaciones conocidas](#11-decisiones-de-diseño-y-limitaciones-conocidas)
+12. [Glosario](#12-glosario)
+13. [Próximos pasos](#13-próximos-pasos)
 
 ---
 
 ## 1. Objetivo de la rama
-Refinar la forma en que la API responde y comunica errores:
-* Reemplazar las excepciones genéricas de .NET en el dominio por excepciones semánticas propias.
-* Hacer que el `GlobalExceptionHandler` entienda ese lenguaje de negocio y responda con 400 o 404.
-* Devolver `201 Created` (en lugar de `200 OK`) cuando una petición POST crea un recurso.
+Completar las operaciones Create, Read, Update y Delete de `Product`. Hasta ahora la API solo permitía crear y listar. Con esta rama también permite:
+* Buscar un producto por su Id.
+* Actualizar su precio y agregar stock.
+* Eliminarlo.
+
+Además, aprovecha que ya existe un `GET /api/Products/{id}` para que la creación devuelva el encabezado `Location`, algo que había quedado pendiente en `feature/domain-exceptions`.
 
 ---
 
-## 2. Punto de partida y problema a resolver
-Al terminar `feature/error-handling-validation`, el dominio lanzaba `ArgumentException` e `InvalidOperationException` para representar reglas de negocio rotas, y el manejador global las traducía a 400.
+## 2. Punto de partida y alcance
 
-Eso tiene un problema de ambigüedad: esas dos excepciones las usa todo el framework y las librerías de terceros, no solo nuestro dominio.
+**Ya existía (ramas anteriores)**
+* POST y GET (lista) de Products
+* `NotFoundException` y su traducción a 404 (sin uso real)
+* `201 Created` sin encabezado Location
+* Validación con FluentValidation y manejo global de errores
 
-| Situación | Excepción | Respuesta antes de esta rama |
-| --- | --- | --- |
-| Precio negativo en Product | `ArgumentException` | 400 (correcto) |
-| Bug en componente del framework | `InvalidOperationException` | 400 (incorrecto: es un error del servidor) |
+**Se agrega en esta rama**
+* `GET /{id}`, `PUT /{id}`, `DELETE /{id}`
+* Primer caso de uso que la lanza: `GetProductByIdQuery`
+* `201 Created` con Location (`CreatedAtAction`)
 
-El manejador no podía distinguir un error de negocio de un error de programación. Con una excepción propia, un `DomainException` siempre significa "se rompió una regla de negocio".
-
-Además, las creaciones respondían `200 OK`, cuando el estándar HTTP indica `201 Created`.
+| Incluye | No incluye |
+| --- | --- |
+| CRUD completo de Product | CRUD de Brands, Categories y Reviews |
+| Eliminación física | Eliminación lógica (soft delete) |
+| Actualización de precio y stock | Actualización de nombre y descripción |
 
 ---
 
 ## 3. Resumen de cambios
 
-| # | Cambio | Capa | Archivos |
-| --- | --- | --- | --- |
-| 1 | Crear `DomainException` y `NotFoundException` | **Domain** | `Exceptions/` |
-| 2 | `Product` lanza `DomainException` en lugar de nativas | **Domain** | `Entities/Product.cs` |
-| 3 | El manejador global traduce a 400 y 404 | **Api** | `Middlewares/GlobalExceptionHandler.cs` |
-| 4 | Los POST devuelven `201 Created` | **Api** | 4 controladores |
+| # | Cambio | Capa |
+| --- | --- | --- |
+| 1 | `GetProductByIdQuery` + handler | Application |
+| 2 | `UpdateProductCommand` + handler | Application |
+| 3 | `DeleteProductCommand` + handler | Application |
+| 4 | Nuevas operaciones en `IProductRepository` y `ProductRepository` | Application / Infrastructure |
+| 5 | Endpoints `GET /{id}`, `PUT /{id}`, `DELETE /{id}` | Api |
+| 6 | POST usa `CreatedAtAction` en lugar de `StatusCode(201)` | Api |
+
+**Flujo general**
+```mermaid
+flowchart LR
+    C[Cliente] --> API[ProductsController]
+    API --> M[MediatR]
+    M --> Q[GetProductByIdQuery]
+    M --> U[UpdateProductCommand]
+    M --> D[DeleteProductCommand]
+    Q --> R[IProductRepository]
+    U --> R
+    D --> R
+    R --> DB[(SQL Server)]
+    Q -. no existe .-> NF[NotFoundException]
+    U -. no existe .-> NF
+    D -. no existe .-> NF
+    NF --> H[GlobalExceptionHandler]
+    H --> E404[404 Not Found]
+```
 
 ---
 
@@ -61,165 +88,151 @@ Además, las creaciones respondían `200 OK`, cuando el estándar HTTP indica `2
 ```bash
 git checkout main
 git pull origin main
-git checkout -b feature/domain-exceptions
+git checkout -b feature/product-full-crud
 ```
 
-### 4.2 Crear la carpeta y las excepciones (Domain)
-```bash
-mkdir ProductAPI.Domain/Exceptions
-```
+### 4.2 Extender el repositorio
+En `IProductRepository` (Application) se agregan las operaciones que necesitan los nuevos casos de uso (obtener por Id, actualizar y eliminar). Después se implementan en `ProductRepository` (Infrastructure).
 
-### 4.3 Refactorizar Product
-Reemplazar excepciones nativas por `DomainException`.
+### 4.3 Crear los casos de uso
+Por cada operación, un mensaje y su handler:
+| Operación | Mensaje | Handler |
+| --- | --- | --- |
+| Consultar por Id | `GetProductByIdQuery` | `GetProductByIdQueryHandler` |
+| Actualizar | `UpdateProductCommand` | `UpdateProductCommandHandler` |
+| Eliminar | `DeleteProductCommand` | `DeleteProductCommandHandler` |
 
-### 4.4 Actualizar el GlobalExceptionHandler (Api)
-Agregar las ramas para `DomainException` y `NotFoundException`.
+### 4.4 Agregar los endpoints al controlador
+Endpoints GET /{id}, PUT /{id}, DELETE /{id}.
 
-### 4.5 Cambiar los controladores a 201 Created
-Modificar la acción POST de todos los controladores.
+### 4.5 Cambiar el POST a CreatedAtAction
+Devolver 201 Created apuntando a GET /{id}.
 
 ### 4.6 Commits y Pull Request
 ```bash
 git add .
-git commit -m "feat: add domain exceptions and return 201 Created on POST"
-git push -u origin feature/domain-exceptions
+git commit -m "feat: add GetById, Update and Delete use cases for Product"
+git push -u origin feature/product-full-crud
 ```
 
 ---
 
-## 5. Excepciones personalizadas del dominio
-Ubicación: `ProductAPI.Domain/Exceptions/`
+## 5. Casos de uso (Application)
 
-| Excepción | Cuándo se usa | Respuesta HTTP |
-| --- | --- | --- |
-| `DomainException` | Se rompe una regla de negocio | 400 Bad Request |
-| `NotFoundException`| Se busca un identificador que no existe | 404 Not Found |
+### 5.1 GetProductByIdQuery
+* **Tipo:** Query
+* **Entrada:** Guid del producto
+* **Salida:** ProductDto
+* **Si no existe:** Lanza `NotFoundException` -> el middleware global responde 404
 
-**Sobre "el dominio no debe depender de excepciones del sistema"**
-Las nuevas excepciones siguen heredando de `System.Exception` (que es parte de la biblioteca base de .NET). Lo que cambia no es la dependencia técnica, sino el **significado**:
+### 5.2 UpdateProductCommand
+* **Tipo:** Command
+* **Entrada:** Id, nuevo Price, StockToAdd
+* **Salida:** Nada (204 No Content)
+* **Reglas:** Reutiliza los métodos del dominio (`UpdatePrice`, `AddStock`). Si el dominio rechaza el valor, lanza `DomainException` (400).
 
-| | `ArgumentException` | `DomainException` |
-| --- | --- | --- |
-| **Quién las lanza** | Dominio, framework y librerías | Solo el dominio |
-| **Significado** | Genérico | "Regla de negocio rota" |
-| **Mapeo a 400 seguro** | No (hay falsos positivos) | Sí |
-
----
-
-## 6. Refactorización de la entidad Product
-
-**Tabla de equivalencias**
-| Método | Regla | Antes | Ahora |
-| --- | --- | --- | --- |
-| `UpdatePrice` | Precio no negativo | `ArgumentException` | `DomainException` |
-| `AddStock` | Cantidad no negativa| `ArgumentException` | `DomainException` |
-| `RemoveStock` | Cantidad mayor a 0 | `ArgumentException` | `DomainException` |
-| `RemoveStock` | Stock suficiente | `InvalidOperationException` | `DomainException` |
-
-Las reglas no cambian; cambia solo el tipo de excepción.
+### 5.3 DeleteProductCommand
+* **Tipo:** Command
+* **Entrada:** Guid del producto
+* **Salida:** Nada (204 No Content)
+* **Tipo de borrado:** Físico.
+* **Si no existe:** 404.
 
 ---
 
-## 7. Cambios en GlobalExceptionHandler
+## 6. Controlador (Api)
+Endpoints agregados a `ProductsController`:
 
-El manejador entiende las dos excepciones nuevas:
+| Elemento | Explicación |
+| --- | --- |
+| `{id:guid}` | Restricción de ruta: solo acepta Guid válidos; con otro valor responde 404 sin entrar a la acción. |
+| `NoContent()` | 204: la operación tuvo éxito y no hay cuerpo que devolver. |
+| Sin `try/catch` | Las excepciones las resuelve el `GlobalExceptionHandler`. |
 
-| Excepción | Código | Estado |
-| --- | --- | --- |
-| `NotFoundException` | 404 Not Found | Listo; se usará cuando existan consultas por Id |
-| `DomainException` | 400 Bad Request | Activo |
-| `ValidationException` | 400 Bad Request | Activo |
-| Cualquier otra | 500 Internal Server Error | Activo |
+---
 
-```mermaid
-flowchart TD
-    A[Excepción lanzada] --> B[GlobalExceptionHandler]
-    B --> C{¿Qué tipo es?}
-    C -- NotFoundException --> D[404 Not Found]
-    C -- DomainException --> E[400 Bad Request]
-    C -- ValidationException --> F[400 Bad Request + errors]
-    C -- Otra --> G[500 Internal Server Error]
-    D --> H[Respuesta ProblemDetails]
-    E --> H
-    F --> H
-    G --> H
+## 7. CreatedAtAction y el encabezado Location
+
+**Antes:** `return StatusCode(StatusCodes.Status201Created, ...);`
+**Después:** `return CreatedAtAction(nameof(GetProductById), new { id = productId }, ...);`
+
+**Qué produce:**
+```http
+HTTP/1.1 201 Created
+Content-Type: application/json
+Location: https://localhost:7112/api/Products/3fa85f64-...
 ```
 
 ---
 
-## 8. Respuestas 201 Created en los controladores
+## 8. Referencia de endpoints
+Base: `/api/Products`
 
-### 8.1 Por qué 201 y no 200
-| Código | Significado | Cuándo usarlo |
-| --- | --- | --- |
-| `200 OK` | La petición tuvo éxito | Lecturas y actualizaciones |
-| `201 Created` | Se creó un recurso nuevo | Respuesta de un POST que crea algo |
-
-### 8.2 Controladores actualizados
-| Controlador | Acción POST | Código anterior | Código actual |
-| --- | --- | --- | --- |
-| `ProductsController` | Crear producto | 200 | 201 |
-| `BrandsController` | Crear marca | 200 | 201 |
-| `CategoriesController`| Crear categoría | 200 | 201 |
-| `ReviewsController` | Crear reseña | 200 | 201 |
-
-*(La respuesta ideal incluiría `Location` y `CreatedAtAction`, pero esto requiere los endpoints GET por Id que aún no existen).*
+| Método | Ruta | Descripción | Éxito | Errores |
+| --- | --- | --- | --- | --- |
+| POST | `/` | Crear producto | 201 Created + Location | 400 (validación o regla) |
+| GET | `/` | Listar productos | 200 OK | — |
+| GET | `/{id}` | Obtener por Id | 200 OK | 404 |
+| PUT | `/{id}` | Actualizar precio y stock | 204 No Content | 400, 404 |
+| DELETE | `/{id}` | Eliminar | 204 No Content | 404 |
 
 ---
 
-## 9. Pruebas
+## 9. Cómo probarlo paso a paso
 
-Los tests de dominio deberían ser actualizados para esperar una `DomainException` en vez de excepciones nativas.
-
-Para probar la respuesta HTTP en Swagger, el resultado en creaciones exitosas ahora marca `201 Created`. Los errores de validación de entradas siguen saliendo como `400` capturados por FluentValidation en la capa de Aplicación.
+### 9.1 Recorrido completo del CRUD
+1. `POST /api/Categories` -> 201. Copiar Id.
+2. `POST /api/Brands` -> 201. Copiar Id.
+3. `POST /api/Products` -> 201 + Location. Copiar Id.
+4. `GET /api/Products/{id}` -> 200.
+5. `PUT /api/Products/{id}` -> 204.
+6. `GET /api/Products/{id}` -> 200 (datos actualizados).
+7. `DELETE /api/Products/{id}` -> 204.
+8. `GET /api/Products/{id}` -> 404.
 
 ---
 
 ## 10. Mapa de respuestas HTTP
 
-| Situación | Excepción | Código |
+| Situación | Origen | Código |
 | --- | --- | --- |
-| Recurso creado correctamente (POST) | (ninguna) | **201 Created** |
-| Datos de entrada inválidos (validador) | `ValidationException` | **400** |
-| Regla de negocio rota en el dominio | `DomainException` | **400** |
-| Recurso inexistente | `NotFoundException` | **404** *(próximamente)* |
-| CategoryId inexistente (FK BD) | Excepción de EF Core | **500** |
+| Producto creado | POST | 201 + Location |
+| Producto encontrado | GET /{id} | 200 |
+| Producto actualizado | PUT /{id} | 204 |
+| Producto eliminado | DELETE /{id} | 204 |
+| Producto no encontrado | `NotFoundException` | 404 |
+| Dato de entrada inválido | `ValidationException` | 400 |
+| Regla de negocio rota | `DomainException` | 400 |
+| CategoryId inexistente (FK) | Excepción de EF Core | 500 |
 
 ---
 
-## 11. Qué se gana con estos cambios
-* **Semántica REST:** creaciones como 201, reglas rotas como 400 y no encontrados como 404.
-* **Intención explícita:** `DomainException` significa siempre "regla de negocio rota".
-* **Mapeo seguro:** el manejador global ya no depende de tipos genéricos.
-* **ProblemDetails consistente:** las excepciones usan el formato estándar.
-
----
-
-## 12. Decisiones de diseño y limitaciones conocidas
+## 11. Decisiones de diseño y limitaciones conocidas
 
 | Tema | Estado actual | Mejora sugerida |
 | --- | --- | --- |
-| Ramas antiguas | El manejador ya no atrapa genéricas como negocio | Correcto |
-| `NotFoundException` en Domain | Vive en la capa de dominio | Discutible; algunos prefieren Application |
-| 404 sin uso real | Está implementado pero ningún endpoint lo lanza | Implementar consultas por Id |
-| 201 sin Location | Falta el encabezado con URL | `CreatedAtAction` cuando exista GET por Id |
-| Llave foránea | 500 | Lanzar 404 al verificar |
+| PUT no es idempotente | `stockToAdd` suma al stock cada vez que se llama | Usar PATCH o endpoint específico |
+| Alcance del PUT | Solo actualiza precio y stock | Agregar métodos de renombre en Product |
+| Id duplicado en ruta y cuerpo | `PUT /{id}` recibe el Id también en el cuerpo | Rechazar con 400 si no coinciden |
+| Eliminación física | El registro se pierde definitivamente | Implementar Soft Delete |
+| Concurrencia | Dos peticiones pueden sobrescribir stock | Token de concurrencia (rowversion) |
 
 ---
 
-## 13. Glosario
+## 12. Glosario
 | Término | Definición |
 | --- | --- |
-| **Excepción de dominio** | Excepción propia que representa regla de negocio rota |
-| **REST** | Estilo de API usando verbos y códigos HTTP estándar |
-| **201 Created** | Código que indica que se creó un recurso nuevo |
-| **404 Not Found** | Código que indica recurso inexistente |
-| **Falso positivo** | Tratar como error de negocio algo que es error del sistema |
+| **CRUD** | Create, Read, Update, Delete |
+| **204 No Content** | Éxito sin cuerpo que devolver |
+| **Location** | Encabezado HTTP con URL del recurso creado |
+| **CreatedAtAction** | Método ASP.NET que devuelve 201 y el Location |
+| **Idempotente** | Operación que produce el mismo resultado si se repite múltiples veces |
+| **Eliminación lógica** | Marcar registro como eliminado sin borrarlo físicamente |
 
 ---
 
-## 14. Próximos pasos
-* Consultas por Id (`GetProductByIdQuery`) que lancen `NotFoundException` (404).
-* `CreatedAtAction` con el encabezado `Location` en las creaciones.
-* Verificar `CategoryId` antes de guardar y responder 404 en lugar de 500.
-* Subtipos de `DomainException` (ej. `InsufficientStockException` -> 409).
+## 13. Próximos pasos
+* Replicar el CRUD en Brands, Categories y Reviews.
+* Revisar diseño de PUT e Idempotencia.
+* Soft delete y concurrencia.
+* Paginación en consultas de listado.
